@@ -1,9 +1,8 @@
-{
-  "GameProject": {
-    "Title": "Shadow RP CAD Bridge",
-    "GUID": "A4C19E7B53D02461",
-    "Dependencies": [
-      { "GUID": "58D0FB3206B6F859", "Name": "ArmaReforger" }
-    ]
-  }
+GameProject {
+ ID "ShadowRPCADBridge"
+ GUID "A4C19E7B53D02461"
+ TITLE "Shadow RP CAD Bridge"
+ Dependencies {
+  "58D0FB3206B6F859"
+ }
 }

@@ -1,0 +1,13 @@
+GenericEntity {
+ ID "A4C19E7B53D02462"
+ components {
+  RplComponent "{A4C19E7B53D02463}" {
+   Mode Broadcast
+   "Parent Node From Parent Entity" 0
+  }
+  SRP_CADNetworkManager "{A4C19E7B53D02464}" {
+   m_ApiBaseUrl "https://shadow-rp-cad-backend-production.up.railway.app"
+   m_InternalApiKey "SET_IN_WORKBENCH_TO_RAILWAY_INTERNAL_API_KEY"
+  }
+ }
+}
