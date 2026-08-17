@@ -18,7 +18,21 @@ export function requireInternal(req, res, next) {
   const expected = config.internalApiKey;
   const a = Buffer.from(supplied);
   const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: 'Invalid internal API key' });
+  const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
+  if (!valid) {
+    const fingerprint = supplied
+      ? crypto.createHash('sha256').update(supplied).digest('hex').slice(0, 12)
+      : 'empty';
+    console.warn('[internal-auth] rejected', {
+      path: req.originalUrl,
+      suppliedLength: a.length,
+      fingerprint,
+      bodyKeys: Object.keys(req.body || {}),
+      contentType: req.get('content-type') || '',
+      userAgent: req.get('user-agent') || ''
+    });
+    return res.status(401).json({ error: 'Invalid internal API key' });
+  }
   next();
 }
 
