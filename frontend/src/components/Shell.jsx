@@ -1,0 +1,23 @@
+import { Activity, FileText, IdCard, LayoutDashboard, Link2, LogOut, Map, Search, Shield } from 'lucide-react';
+import { NavLink, Outlet } from 'react-router-dom';
+
+const links = [
+  ['/', LayoutDashboard, 'Dispatch'], ['/lookup', Search, 'Records'], ['/map', Map, 'Live map'],
+  ['/reports', FileText, 'Reports'], ['/personas', IdCard, 'Personas'], ['/linking', Link2, 'Account link']
+];
+
+export default function Shell({ user, onLogout }) {
+  const cadUser = ['LEO','EMS','DISPATCH','ADMIN'].includes(user.role);
+  const visibleLinks = cadUser ? links : links.filter(([to]) => ['/personas','/linking'].includes(to));
+  return <div className="app-shell">
+    <aside className="sidebar">
+      <div className="brand"><div className="brand-mark">SR</div><div><strong>SHADOW</strong><span>CAD / MDT</span></div></div>
+      <nav>{visibleLinks.map(([to, Icon, label]) => <NavLink key={to} to={to} end={to === '/'} className={({isActive}) => isActive ? 'active' : ''}><Icon size={18}/><span>{label}</span></NavLink>)}</nav>
+      <div className="sidebar-bottom"><div className="connection"><Activity size={14}/><span>Systems operational</span></div><button className="nav-button" onClick={onLogout}><LogOut size={18}/> Sign out</button></div>
+    </aside>
+    <div className="main-column">
+      <header className="topbar"><div><span className="eyebrow">SHADOW RP PUBLIC SAFETY</span><strong>Computer Aided Dispatch</strong></div><div className="user-chip"><Shield size={16}/><span>{user.discord_username}</span><b>{user.role}</b></div></header>
+      <main className="content"><Outlet /></main>
+    </div>
+  </div>;
+}
