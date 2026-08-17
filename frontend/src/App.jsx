@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { api, API_URL } from './api.js';
 import Shell from './components/Shell.jsx';
+import Admin from './pages/Admin.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Lookup from './pages/Lookup.jsx';
 import Linking from './pages/Linking.jsx';
@@ -38,6 +39,7 @@ export default function App() {
       <Route path="linking" element={<Linking user={state.user} />} />
       <Route path="personas" element={<Personas />} />
       <Route path="market" element={<Market />} />
+      <Route path="admin" element={state.user.role === 'ADMIN' ? <Admin user={state.user}/> : <Navigate to="/" replace />} />
       <Route path="reports" element={cadUser ? <Reports /> : <Navigate to="/personas" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Route>

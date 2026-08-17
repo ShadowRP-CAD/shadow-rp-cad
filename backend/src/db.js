@@ -120,12 +120,25 @@ export function createDatabase(filename = config.databasePath) {
       total REAL NOT NULL CHECK(total > 0),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_name TEXT NOT NULL,
+      action TEXT NOT NULL,
+      entity_type TEXT NOT NULL,
+      entity_id TEXT,
+      details TEXT NOT NULL DEFAULT '{}',
+      ip_address TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE INDEX IF NOT EXISTS idx_characters_name ON characters(last_name, first_name);
     CREATE INDEX IF NOT EXISTS idx_calls_status ON active_calls(status, created_at);
     CREATE INDEX IF NOT EXISTS idx_units_updated ON units(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tokens_expiry ON link_tokens(expires_at);
     CREATE INDEX IF NOT EXISTS idx_market_prices_symbol_time ON market_prices(symbol, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_market_orders_user_time ON market_orders(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at DESC);
   `);
   const characterColumns = db.prepare('PRAGMA table_info(characters)').all();
   if (!characterColumns.some(column => column.name === 'alias')) db.exec('ALTER TABLE characters ADD COLUMN alias TEXT');

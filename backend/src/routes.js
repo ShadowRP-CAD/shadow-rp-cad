@@ -6,6 +6,11 @@ const parseJson = value => { try { return JSON.parse(value || '[]'); } catch { r
 const cleanString = (value, max = 500) => String(value ?? '').trim().slice(0, max);
 const cadRoles = ['LEO', 'EMS', 'DISPATCH', 'ADMIN'];
 
+function audit(db, req, action, entityType, entityId, details = {}) {
+  db.prepare(`INSERT INTO audit_logs (user_id,actor_name,action,entity_type,entity_id,details,ip_address) VALUES (?,?,?,?,?,?,?)`)
+    .run(req.user?.id || null, req.user?.discord_username || 'Game Server', action, entityType, entityId == null ? null : String(entityId), JSON.stringify(details), req.ip);
+}
+
 function rowToCharacter(row) {
   return row && { ...row, alias: row.alias || `${row.first_name} ${row.last_name}`.trim(), warrants: parseJson(row.warrants), priors: parseJson(row.priors) };
 }
@@ -83,12 +88,13 @@ export function createApiRouter(db, events) {
     db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare('UPDATE users SET reforger_uid = ?, steam_id = COALESCE(?, steam_id) WHERE id = ?').run(record.reforger_uid, steamId, req.user.id);
-      db.prepare('UPDATE link_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = ?').run(token);
+    db.prepare('UPDATE link_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = ?').run(token);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
       throw error;
     }
+    audit(db, req, 'ACCOUNT_LINKED', 'USER', req.user.id, { reforgerUid: record.reforger_uid, playerAlias: record.player_name });
     res.json({ linked: true, reforgerUid: record.reforger_uid, playerName: record.player_name });
   });
 
@@ -135,6 +141,7 @@ export function createApiRouter(db, events) {
     const assigned = Array.isArray(req.body.assignedUnits) ? req.body.assignedUnits.map(v => cleanString(v, 24)).slice(0, 12) : parseJson(current.assigned_units);
     db.prepare('UPDATE active_calls SET status = ?, assigned_units = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, JSON.stringify(assigned), current.id);
     const call = rowToCall(db.prepare('SELECT * FROM active_calls WHERE id = ?').get(current.id));
+    audit(db, req, 'CALL_UPDATED', 'CALL', current.id, { status, assignedUnits: assigned });
     events.broadcast('call.updated', call);
     res.json(call);
   });
@@ -163,7 +170,9 @@ export function createApiRouter(db, events) {
     const dob = cleanString(req.body.dob, 10), gender = cleanString(req.body.gender || 'Unspecified', 30);
     if (!alias || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return res.status(400).json({ error: 'A roleplay alias and valid roleplay date of birth are required' });
     const result = db.prepare('INSERT INTO characters (user_id, first_name, last_name, alias, dob, gender) VALUES (?, ?, ?, ?, ?, ?)').run(req.user.id, alias, '', alias, dob, gender);
-    res.status(201).json(rowToCharacter(db.prepare('SELECT * FROM characters WHERE id = ?').get(result.lastInsertRowid)));
+    const character = rowToCharacter(db.prepare('SELECT * FROM characters WHERE id = ?').get(result.lastInsertRowid));
+    audit(db, req, 'PERSONA_CREATED', 'PERSONA', result.lastInsertRowid, { alias });
+    res.status(201).json(character);
   });
 
   router.post('/vehicles', requireAuth, (req, res) => {
@@ -171,7 +180,9 @@ export function createApiRouter(db, events) {
     if (!owner) return res.status(403).json({ error: 'Character does not belong to this account' });
     try {
       const result = db.prepare('INSERT INTO vehicles (plate, model, owner_id, color) VALUES (?, ?, ?, ?)').run(cleanString(req.body.plate, 20).toUpperCase(), cleanString(req.body.model, 80), owner.id, cleanString(req.body.color, 30));
-      res.status(201).json(db.prepare('SELECT * FROM vehicles WHERE id = ?').get(result.lastInsertRowid));
+      const created = db.prepare('SELECT * FROM vehicles WHERE id = ?').get(result.lastInsertRowid);
+      audit(db, req, 'VEHICLE_REGISTERED', 'VEHICLE', result.lastInsertRowid, { plate: created.plate, model: created.model });
+      res.status(201).json(created);
     } catch (error) { if (String(error).includes('UNIQUE')) return res.status(409).json({ error: 'Plate already exists' }); throw error; }
   });
 
@@ -186,7 +197,9 @@ export function createApiRouter(db, events) {
     if (!['INCIDENT','ARREST','CITATION'].includes(type)) return res.status(400).json({ error: 'Invalid report type' });
     const result = db.prepare(`INSERT INTO reports (report_type, title, narrative, character_id, author_user_id, charges, fine_amount)
       VALUES (?, ?, ?, ?, ?, ?, ?)`).run(type, cleanString(req.body.title, 120), cleanString(req.body.narrative, 5000), req.body.characterId || null, req.user.id, JSON.stringify(req.body.charges || []), Number(req.body.fineAmount) || null);
-    res.status(201).json(db.prepare('SELECT * FROM reports WHERE id = ?').get(result.lastInsertRowid));
+    const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(result.lastInsertRowid);
+    audit(db, req, 'REPORT_FILED', 'REPORT', result.lastInsertRowid, { reportType: type, title: report.title });
+    res.status(201).json(report);
   });
 
   router.get('/market', requireAuth, (req, res) => res.json(marketSnapshot(db, req.user.id)));
@@ -227,7 +240,104 @@ export function createApiRouter(db, events) {
       throw error;
     }
     events.broadcast('market.trade', { symbol, side, quantity });
+    audit(db, req, 'MARKET_ORDER', 'MARKET', symbol, { side, quantity, price, total });
     res.status(201).json(marketSnapshot(db, req.user.id));
+  });
+
+  router.get('/admin/overview', requireAuth, requireRole('ADMIN'), (_req, res) => {
+    const users = db.prepare(`SELECT u.*, COALESCE(e.cash_balance,25000) AS cash_balance,
+      (SELECT COUNT(*) FROM characters c WHERE c.user_id=u.id) AS persona_count,
+      (SELECT COUNT(*) FROM market_orders o WHERE o.user_id=u.id) AS order_count
+      FROM users u LEFT JOIN economy_accounts e ON e.user_id=u.id ORDER BY u.created_at DESC`).all();
+    const characters = db.prepare(`SELECT c.*, u.discord_username FROM characters c JOIN users u ON u.id=c.user_id ORDER BY c.created_at DESC`).all().map(rowToCharacter);
+    const vehicles = db.prepare(`SELECT v.*, COALESCE(c.alias,trim(c.first_name || ' ' || c.last_name)) AS owner_alias, u.discord_username
+      FROM vehicles v JOIN characters c ON c.id=v.owner_id JOIN users u ON u.id=c.user_id ORDER BY v.id DESC`).all().map(row => ({ ...row, is_stolen: Boolean(row.is_stolen) }));
+    const calls = db.prepare('SELECT * FROM active_calls ORDER BY id DESC LIMIT 250').all().map(rowToCall);
+    const reports = db.prepare(`SELECT r.*, u.discord_username, COALESCE(c.alias,trim(c.first_name || ' ' || c.last_name)) AS subject_alias
+      FROM reports r JOIN users u ON u.id=r.author_user_id LEFT JOIN characters c ON c.id=r.character_id ORDER BY r.id DESC LIMIT 250`).all().map(row => ({ ...row, charges: parseJson(row.charges) }));
+    const orders = db.prepare(`SELECT o.*,u.discord_username FROM market_orders o JOIN users u ON u.id=o.user_id ORDER BY o.id DESC LIMIT 250`).all();
+    const logs = db.prepare('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 500').all().map(row => ({ ...row, details: parseJson(row.details) }));
+    res.json({ users, characters, vehicles, calls, reports, orders, logs, counts: {
+      users: users.length, personas: characters.length, vehicles: vehicles.length,
+      activeCalls: calls.filter(call => call.status !== 'CLOSED').length, reports: reports.length, orders: orders.length
+    }});
+  });
+
+  router.patch('/admin/users/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const role = cleanString(req.body.role, 16).toUpperCase();
+    if (!['CIVILIAN','LEO','EMS','DISPATCH','ADMIN'].includes(role)) return res.status(400).json({ error: 'Invalid role' });
+    if (Number(req.params.id) === req.user.id && role !== 'ADMIN') return res.status(400).json({ error: 'You cannot remove your own administrator access' });
+    const target = db.prepare('SELECT * FROM users WHERE id=?').get(req.params.id);
+    if (!target) return res.status(404).json({ error: 'User not found' });
+    db.prepare('UPDATE users SET role=? WHERE id=?').run(role, target.id);
+    audit(db, req, 'USER_ROLE_CHANGED', 'USER', target.id, { username: target.discord_username, from: target.role, to: role });
+    res.json(db.prepare('SELECT * FROM users WHERE id=?').get(target.id));
+  });
+
+  router.patch('/admin/characters/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM characters WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Persona not found' });
+    const alias = cleanString(req.body.alias ?? current.alias, 60), dob = cleanString(req.body.dob ?? current.dob, 10), gender = cleanString(req.body.gender ?? current.gender, 30);
+    const driver = cleanString(req.body.driverLicense ?? current.driver_license, 24), firearm = cleanString(req.body.firearmLicense ?? current.firearm_license, 24);
+    if (!alias || !/^\d{4}-\d{2}-\d{2}$/.test(dob)) return res.status(400).json({ error: 'Valid alias and roleplay DOB required' });
+    db.prepare('UPDATE characters SET alias=?,first_name=?,last_name=?,dob=?,gender=?,driver_license=?,firearm_license=? WHERE id=?').run(alias, alias, '', dob, gender, driver, firearm, current.id);
+    audit(db, req, 'PERSONA_EDITED', 'PERSONA', current.id, { alias });
+    res.json(rowToCharacter(db.prepare('SELECT * FROM characters WHERE id=?').get(current.id)));
+  });
+
+  router.delete('/admin/characters/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM characters WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Persona not found' });
+    db.prepare('DELETE FROM characters WHERE id=?').run(current.id);
+    audit(db, req, 'PERSONA_REMOVED', 'PERSONA', current.id, { alias: current.alias });
+    res.status(204).end();
+  });
+
+  router.patch('/admin/vehicles/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM vehicles WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Vehicle not found' });
+    const plate = cleanString(req.body.plate ?? current.plate, 20).toUpperCase(), model = cleanString(req.body.model ?? current.model, 80), color = cleanString(req.body.color ?? current.color, 30);
+    const stolen = req.body.isStolen == null ? current.is_stolen : Number(Boolean(req.body.isStolen));
+    db.prepare('UPDATE vehicles SET plate=?,model=?,color=?,is_stolen=? WHERE id=?').run(plate, model, color, stolen, current.id);
+    audit(db, req, 'VEHICLE_EDITED', 'VEHICLE', current.id, { plate, stolen: Boolean(stolen) });
+    res.json({ ...db.prepare('SELECT * FROM vehicles WHERE id=?').get(current.id), is_stolen: Boolean(stolen) });
+  });
+
+  router.delete('/admin/vehicles/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM vehicles WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Vehicle not found' });
+    db.prepare('DELETE FROM vehicles WHERE id=?').run(current.id);
+    audit(db, req, 'VEHICLE_REMOVED', 'VEHICLE', current.id, { plate: current.plate });
+    res.status(204).end();
+  });
+
+  router.patch('/admin/calls/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM active_calls WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Call not found' });
+    const status = ['OPEN','DISPATCHED','CLOSED'].includes(req.body.status) ? req.body.status : current.status;
+    db.prepare(`UPDATE active_calls SET call_title=?,caller_name=?,location_grid=?,description=?,status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).run(
+      cleanString(req.body.callTitle ?? current.call_title,100), cleanString(req.body.callerName ?? current.caller_name,80), cleanString(req.body.locationGrid ?? current.location_grid,32), cleanString(req.body.description ?? current.description,1000), status, current.id);
+    audit(db, req, 'CALL_ADMIN_EDITED', 'CALL', current.id, { status });
+    const call = rowToCall(db.prepare('SELECT * FROM active_calls WHERE id=?').get(current.id)); events.broadcast('call.updated', call); res.json(call);
+  });
+
+  router.delete('/admin/calls/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM active_calls WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Call not found' });
+    db.prepare('DELETE FROM active_calls WHERE id=?').run(current.id); audit(db, req, 'CALL_REMOVED', 'CALL', current.id, { title: current.call_title }); res.status(204).end();
+  });
+
+  router.delete('/admin/reports/:id', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const current = db.prepare('SELECT * FROM reports WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'Report not found' });
+    db.prepare('DELETE FROM reports WHERE id=?').run(current.id); audit(db, req, 'REPORT_REMOVED', 'REPORT', current.id, { title: current.title }); res.status(204).end();
+  });
+
+  router.patch('/admin/economy/:userId', requireAuth, requireRole('ADMIN'), (req, res) => {
+    const cash = Number(req.body.cashBalance);
+    if (!Number.isFinite(cash) || cash < 0 || cash > 100000000) return res.status(400).json({ error: 'Cash balance must be between 0 and 100,000,000' });
+    ensureEconomyAccount(db, req.params.userId); db.prepare('UPDATE economy_accounts SET cash_balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(Number(cash.toFixed(2)), req.params.userId);
+    audit(db, req, 'ECONOMY_BALANCE_CHANGED', 'USER', req.params.userId, { cashBalance: cash }); res.json({ userId: Number(req.params.userId), cashBalance: cash });
   });
 
   return router;

@@ -67,4 +67,19 @@ describe('Shadow RP CAD API', () => {
     assert.equal(bought.body.holdings.find(item => item.symbol === 'SHDW').quantity, 3);
     assert.ok(bought.body.account.cash < market.body.account.cash);
   });
+
+  it('gives administrators complete oversight and protected edit controls', async () => {
+    const overview = await agent.get('/api/admin/overview').expect(200);
+    assert.ok(overview.body.counts.users >= 1);
+    assert.ok(overview.body.logs.some(log => log.action === 'MARKET_ORDER'));
+    const persona = overview.body.characters.find(item => item.alias === 'Cipher');
+    const edited = await agent.patch(`/api/admin/characters/${persona.id}`).send({ alias: 'Cipher Prime', dob: persona.dob, gender: persona.gender, driverLicense: 'SUSPENDED' }).expect(200);
+    assert.equal(edited.body.alias, 'Cipher Prime');
+    assert.equal(edited.body.driver_license, 'SUSPENDED');
+  });
+
+  it('prevents an administrator from removing their own access', async () => {
+    const me = await agent.get('/api/me').expect(200);
+    await agent.patch(`/api/admin/users/${me.body.user.id}`).send({ role: 'CIVILIAN' }).expect(400);
+  });
 });

@@ -1,4 +1,4 @@
-import { Activity, ChartCandlestick, FileText, IdCard, LayoutDashboard, Link2, LogOut, Map, Search, Shield } from 'lucide-react';
+import { Activity, ChartCandlestick, FileText, IdCard, LayoutDashboard, Link2, LogOut, Map, Search, Shield, ShieldCheck } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
 
 const links = [
@@ -8,7 +8,7 @@ const links = [
 
 export default function Shell({ user, onLogout }) {
   const cadUser = ['LEO','EMS','DISPATCH','ADMIN'].includes(user.role);
-  const visibleLinks = cadUser ? links : links.filter(([to]) => ['/market','/personas','/linking'].includes(to));
+  const visibleLinks = cadUser ? [...links, ...(user.role === 'ADMIN' ? [['/admin', ShieldCheck, 'Admin center']] : [])] : links.filter(([to]) => ['/market','/personas','/linking'].includes(to));
   return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><img className="brand-logo" src={`${import.meta.env.BASE_URL}shadow-rp-logo.gif`} alt="Shadow RP"/><div><strong>SHADOW RP</strong><span>CAD · MDT · EXCHANGE</span></div></div>

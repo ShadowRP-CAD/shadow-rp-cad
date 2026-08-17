@@ -7,6 +7,7 @@ A complete starter system for a Shadow RP Arma Reforger server:
 - Arma Reforger addon using Enfusion's current public `RestApi` / `RestContext` API
 - Shadow Exchange persistent virtual stock market with portfolios and order history
 - Alias-first roleplay personas that never request a real first or last name
+- Grizzly administration center with global records control and persistent audit history
 
 The repository is intentionally framework-light. SQLite is accessed through Node's built-in `node:sqlite` module; there is no native database package or Prisma generation step.
 
@@ -125,6 +126,8 @@ All browser requests use the session cookie. The three in-game POST routes requi
 | GET/POST | `/api/vehicles` | Signed in | List/register own vehicles |
 | GET | `/api/market` | Signed in | Prices, history, portfolio, and order ledger |
 | POST | `/api/market/trade` | Signed in | Buy or sell fictional server-economy shares |
+| GET | `/api/admin/overview` | Admin | Global accounts, records, economy, and audit stream |
+| PATCH/DELETE | `/api/admin/*` | Admin | Moderate roles, balances, personas, vehicles, calls, and reports |
 | POST | `/api/reports` | CAD role | File incident, arrest, or citation report |
 | WS | `/ws` | Signed in | `call.created`, `call.updated`, `unit.updated` events |
 
@@ -151,6 +154,7 @@ The schema is created idempotently on startup in `backend/src/db.js`.
 - `sessions`: server-side authenticated sessions
 - `market_assets` / `market_prices`: fictional companies and durable price history
 - `economy_accounts` / `market_holdings` / `market_orders`: balances, portfolios, and trade ledger
+- `audit_logs`: authentication, linking, CAD, records, market, and admin activity history
 
 Warrants, priors, charges, and assigned units are stored as JSON text to keep this starter easy to deploy. For a high-volume community, normalize those fields and migrate to PostgreSQL.
 
