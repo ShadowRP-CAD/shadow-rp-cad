@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-const requiredInProduction = ['SESSION_SECRET', 'INTERNAL_API_KEY', 'DISCORD_CLIENT_ID', 'DISCORD_CLIENT_SECRET'];
+const requiredInProduction = ['SESSION_SECRET', 'INTERNAL_API_KEY'];
 if (process.env.NODE_ENV === 'production') {
   for (const name of requiredInProduction) {
     if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
