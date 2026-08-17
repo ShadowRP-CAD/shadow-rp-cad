@@ -68,6 +68,9 @@ export function registerAuthRoutes(app, db) {
       db.prepare(`INSERT INTO users (discord_id, discord_username) VALUES (?, ?)
         ON CONFLICT(discord_id) DO UPDATE SET discord_username = excluded.discord_username`).run(profile.id, profile.global_name || profile.username);
       const user = db.prepare('SELECT id FROM users WHERE discord_id = ?').get(profile.id);
+      const privilegedUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch' AND role IN ('LEO','EMS','DISPATCH','ADMIN')`).get().count;
+      const realUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch'`).get().count;
+      if (privilegedUsers === 0 && realUsers === 1) db.prepare(`UPDATE users SET role='ADMIN' WHERE id=?`).run(user.id);
       req.session.userId = user.id;
       res.redirect(config.frontendUrl);
     } catch (error) { next(error); }

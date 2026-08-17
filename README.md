@@ -5,6 +5,8 @@ A complete starter system for a Shadow RP Arma Reforger server:
 - React/Vite CAD and civilian portal
 - Node.js/Express bridge with SQLite, Discord OAuth, REST, and WebSockets
 - Arma Reforger addon using Enfusion's current public `RestApi` / `RestContext` API
+- Shadow Exchange persistent virtual stock market with portfolios and order history
+- Alias-first roleplay personas that never request a real first or last name
 
 The repository is intentionally framework-light. SQLite is accessed through Node's built-in `node:sqlite` module; there is no native database package or Prisma generation step.
 
@@ -26,7 +28,7 @@ shadow-rp-cad/
 │   └── Dockerfile
 ├── frontend/
 │   ├── src/components/        Navigation and shared UI
-│   ├── src/pages/             Dashboard, lookup, map, reports, linking, personas
+│   ├── src/pages/             Dashboard, market, lookup, map, reports, linking, personas
 │   └── vite.config.js
 ├── reforger-addon/
 │   ├── addon.gproj
@@ -83,7 +85,7 @@ The API runs on port 3001 and the UI on port 5173. SQLite is created at `backend
 4. For production, add the production API callback, for example `https://cad-api.example.com/auth/discord/callback`.
 5. Set `DISCORD_CALLBACK_URL`, `PUBLIC_API_URL`, and `FRONTEND_URL` to their public HTTPS URLs.
 
-New Discord users receive the `CIVILIAN` role. Promote staff in SQLite after vetting them:
+The first real Discord user is bootstrapped as `ADMIN`; subsequent users receive the `CIVILIAN` role. Promote staff in SQLite after vetting them:
 
 ```sql
 UPDATE users SET role = 'LEO' WHERE discord_id = '123456789012345678';
@@ -121,6 +123,8 @@ All browser requests use the session cookie. The three in-game POST routes requi
 | GET | `/api/cad/vehicle/lookup?plate=` | CAD role | Plate lookup |
 | GET/POST | `/api/characters` | Signed in | List/create own personas |
 | GET/POST | `/api/vehicles` | Signed in | List/register own vehicles |
+| GET | `/api/market` | Signed in | Prices, history, portfolio, and order ledger |
+| POST | `/api/market/trade` | Signed in | Buy or sell fictional server-economy shares |
 | POST | `/api/reports` | CAD role | File incident, arrest, or citation report |
 | WS | `/ws` | Signed in | `call.created`, `call.updated`, `unit.updated` events |
 
@@ -145,6 +149,8 @@ The schema is created idempotently on startup in `backend/src/db.js`.
 - `link_tokens`: expiring single-use code and Reforger identity
 - `reports`: incident, arrest, and citation reports
 - `sessions`: server-side authenticated sessions
+- `market_assets` / `market_prices`: fictional companies and durable price history
+- `economy_accounts` / `market_holdings` / `market_orders`: balances, portfolios, and trade ledger
 
 Warrants, priors, charges, and assigned units are stored as JSON text to keep this starter easy to deploy. For a high-volume community, normalize those fields and migrate to PostgreSQL.
 

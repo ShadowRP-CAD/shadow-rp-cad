@@ -6,13 +6,14 @@ import Dashboard from './pages/Dashboard.jsx';
 import Lookup from './pages/Lookup.jsx';
 import Linking from './pages/Linking.jsx';
 import LiveMap from './pages/LiveMap.jsx';
+import Market from './pages/Market.jsx';
 import Personas from './pages/Personas.jsx';
 import Reports from './pages/Reports.jsx';
 
 function Login() {
   return <main className="login-shell">
     <section className="login-card">
-      <div className="brand-mark large">SR</div>
+      <img className="login-logo" src={`${import.meta.env.BASE_URL}shadow-rp-logo.gif`} alt="Shadow RP"/>
       <p className="eyebrow">SHADOW ROLEPLAY NETWORK</p>
       <h1>Public safety,<br/><em>connected.</em></h1>
       <p className="muted">Secure CAD, dispatch, records, and in-game identity linking for Shadow RP.</p>
@@ -36,6 +37,7 @@ export default function App() {
       <Route path="map" element={<LiveMap />} />
       <Route path="linking" element={<Linking user={state.user} />} />
       <Route path="personas" element={<Personas />} />
+      <Route path="market" element={<Market />} />
       <Route path="reports" element={cadUser ? <Reports /> : <Navigate to="/personas" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Route>

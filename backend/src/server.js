@@ -5,7 +5,7 @@ import { createDatabase, seedDatabase } from './db.js';
 import { createWebSocketHub } from './ws.js';
 
 const db = createDatabase();
-if (config.nodeEnv !== 'production') seedDatabase(db);
+seedDatabase(db, { demo: config.nodeEnv !== 'production' });
 let hub = { broadcast() {} };
 const { app, sessionMiddleware } = createApp(db, { broadcast: (...args) => hub.broadcast(...args) });
 const server = http.createServer(app);

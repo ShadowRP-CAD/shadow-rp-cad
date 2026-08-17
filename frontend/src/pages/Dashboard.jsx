@@ -18,6 +18,9 @@ export default function Dashboard() {
     return () => ws.close();
   }, []);
   const available = useMemo(() => data.units.filter(u => u.duty_status === '10-8').length, [data.units]);
+  const dispatched = useMemo(() => data.calls.filter(call => call.status === 'DISPATCHED').length, [data.calls]);
+  const panic = useMemo(() => data.units.filter(unit => unit.duty_status === '10-99').length, [data.units]);
+  const coverage = useMemo(() => [...new Set(data.units.map(unit => unit.agency))], [data.units]);
 
   async function updateCall(call, status, callsign) {
     const assignedUnits = callsign ? [...new Set([...call.assigned_units, callsign])] : call.assigned_units;
@@ -34,6 +37,7 @@ export default function Dashboard() {
       <article><span>10-8 available</span><strong>{available}</strong><Radio/></article>
       <article><span>Last sync</span><strong className="metric-time">Now</strong><Clock3/></article>
     </div>
+    <section className="command-ribbon"><div><span className="signal-bars"><i/><i/><i/><i/></span><p><b>ENCRYPTED CAD LINK</b><small>WebSocket telemetry live</small></p></div><div><strong>{dispatched}</strong><p><b>ASSIGNED INCIDENTS</b><small>{data.calls.length - dispatched} awaiting dispatch</small></p></div><div className={panic ? 'command-alert' : ''}><strong>{panic}</strong><p><b>PANIC SIGNALS</b><small>{panic ? 'Immediate response required' : 'No emergency activations'}</small></p></div><div><strong>{coverage.length}</strong><p><b>AGENCIES ONLINE</b><small>{coverage.join(' · ') || 'Awaiting field telemetry'}</small></p></div></section>
     <div className="dashboard-grid">
       <section className="panel"><div className="panel-heading"><div><span className="live-dot"/> Active 911 calls</div><small>{data.calls.length} open</small></div>
         <div className="call-list">{data.calls.length === 0 ? <Empty text="No active calls"/> : data.calls.map(call => <article className="call-card" key={call.id}>

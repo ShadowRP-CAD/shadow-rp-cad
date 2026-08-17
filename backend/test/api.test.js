@@ -48,9 +48,23 @@ describe('Shadow RP CAD API', () => {
   });
 
   it('finds seeded people and vehicles', async () => {
-    const people = await agent.get('/api/cad/civilian/lookup?name=Mercer').expect(200);
-    assert.equal(people.body.results[0].last_name, 'Mercer');
+    const people = await agent.get('/api/cad/civilian/lookup?name=Night').expect(200);
+    assert.equal(people.body.results[0].alias, 'Night');
     const vehicles = await agent.get('/api/cad/vehicle/lookup?plate=SRP').expect(200);
     assert.equal(vehicles.body.results[0].plate, 'SRP-104');
+  });
+
+  it('creates alias-only roleplay personas', async () => {
+    const created = await agent.post('/api/characters').send({ alias: 'Cipher', dob: '1998-08-17', gender: 'Unspecified' }).expect(201);
+    assert.equal(created.body.alias, 'Cipher');
+    assert.equal(created.body.last_name, '');
+  });
+
+  it('persists virtual stock purchases and portfolio balances', async () => {
+    const market = await agent.get('/api/market').expect(200);
+    assert.equal(market.body.assets.length, 6);
+    const bought = await agent.post('/api/market/trade').send({ symbol: 'SHDW', side: 'BUY', quantity: 3 }).expect(201);
+    assert.equal(bought.body.holdings.find(item => item.symbol === 'SHDW').quantity, 3);
+    assert.ok(bought.body.account.cash < market.body.account.cash);
   });
 });
