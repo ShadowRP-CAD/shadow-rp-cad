@@ -39,6 +39,17 @@ describe('Shadow RP CAD API', () => {
     await agent.post('/api/link/verify').send({ token: generated.body.token }).expect(400);
   });
 
+  it('only emits the automatic first-join code once per Reforger identity', async () => {
+    const first = await request(app).post('/api/link/onboarding').set('x-api-key', 'test-key')
+      .send({ reforgerUid: 'new-player-777', playerName: 'Ghost' }).expect(201);
+    assert.equal(first.body.showPrompt, true);
+    assert.match(first.body.token, /^[A-Z0-9]{6}$/);
+    const reconnect = await request(app).post('/api/link/onboarding').set('x-api-key', 'test-key')
+      .send({ reforgerUid: 'new-player-777', playerName: 'Ghost' }).expect(200);
+    assert.equal(reconnect.body.showPrompt, false);
+    assert.equal(reconnect.body.token, undefined);
+  });
+
   it('ingests calls and returns the dispatch dashboard', async () => {
     await request(app).post('/api/cad/call911').set('x-api-key', 'test-key').send({
       callerName: 'Pat Doe', locationGrid: '050 060', description: 'Vehicle collision', worldX: 5000, worldZ: 6000
@@ -66,6 +77,18 @@ describe('Shadow RP CAD API', () => {
     const bought = await agent.post('/api/market/trade').send({ symbol: 'SHDW', side: 'BUY', quantity: 3 }).expect(201);
     assert.equal(bought.body.holdings.find(item => item.symbol === 'SHDW').quantity, 3);
     assert.ok(bought.body.account.cash < market.body.account.cash);
+  });
+
+  it('persists linked civilian property, business, and government services', async () => {
+    await agent.post('/api/civilian/properties').send({ propertyName: 'Harbor Loft', propertyType: 'Residence', locationGrid: '041 062', declaredValue: 85000 }).expect(201);
+    await agent.post('/api/civilian/businesses').send({ businessName: 'Cipher Logistics', category: 'Transport & Logistics' }).expect(201);
+    await agent.post('/api/civilian/requests').send({ requestType: 'Business License', title: 'Operating permit', details: 'Application for commercial logistics operations.' }).expect(201);
+    const portal = await agent.get('/api/civilian/portal').expect(200);
+    assert.equal(portal.body.linked, true);
+    assert.equal(portal.body.properties[0].property_name, 'Harbor Loft');
+    assert.equal(portal.body.businesses[0].business_name, 'Cipher Logistics');
+    assert.equal(portal.body.requests[0].status, 'SUBMITTED');
+    assert.ok(portal.body.transactions.some(entry => entry.transaction_type === 'STOCK_PURCHASE'));
   });
 
   it('gives administrators complete oversight and protected edit controls', async () => {

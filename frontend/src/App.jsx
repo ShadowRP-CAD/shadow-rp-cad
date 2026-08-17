@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { api, API_URL } from './api.js';
 import Shell from './components/Shell.jsx';
 import Admin from './pages/Admin.jsx';
+import CivilianHub from './pages/CivilianHub.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Lookup from './pages/Lookup.jsx';
 import Linking from './pages/Linking.jsx';
@@ -33,7 +34,8 @@ export default function App() {
   const cadUser = ['LEO','EMS','DISPATCH','ADMIN'].includes(state.user.role);
   return <HashRouter><Routes>
     <Route element={<Shell user={state.user} onLogout={() => fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).finally(() => location.reload())} />}>
-      <Route index element={cadUser ? <Dashboard /> : <Personas />} />
+      <Route index element={cadUser ? <Dashboard /> : <CivilianHub />} />
+      <Route path="civilian" element={<CivilianHub />} />
       <Route path="lookup" element={<Lookup />} />
       <Route path="map" element={<LiveMap />} />
       <Route path="linking" element={<Linking user={state.user} />} />

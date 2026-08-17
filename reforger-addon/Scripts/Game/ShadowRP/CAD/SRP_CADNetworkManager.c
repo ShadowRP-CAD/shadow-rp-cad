@@ -18,6 +18,22 @@ class SRP_CADLinkResponse : JsonApiStruct
 	}
 }
 
+class SRP_CADOnboardingResponse : JsonApiStruct
+{
+	bool linked;
+	bool showPrompt;
+	string token;
+	string expiresAt;
+
+	void SRP_CADOnboardingResponse()
+	{
+		RegV("linked");
+		RegV("showPrompt");
+		RegV("token");
+		RegV("expiresAt");
+	}
+}
+
 class SRP_CADLinkRequest : JsonApiStruct
 {
 	string apiKey;
@@ -92,12 +108,22 @@ class SRP_CADRestCallback : RestCallback
 
 		if (m_LinkTarget)
 		{
-			SRP_CADLinkResponse response = new SRP_CADLinkResponse();
-			response.ExpandFromRAW(data);
-			if (response.token.IsEmpty())
-				m_LinkTarget.DeliverLinkResult(false, "CAD returned an invalid linking response.");
+			if (m_RequestName == "link.onboarding")
+			{
+				SRP_CADOnboardingResponse onboarding = new SRP_CADOnboardingResponse();
+				onboarding.ExpandFromRAW(data);
+				if (onboarding.showPrompt && !onboarding.token.IsEmpty())
+					m_LinkTarget.DeliverOnboardingCode(onboarding.token);
+			}
 			else
-				m_LinkTarget.DeliverLinkResult(true, response.token);
+			{
+				SRP_CADLinkResponse response = new SRP_CADLinkResponse();
+				response.ExpandFromRAW(data);
+				if (response.token.IsEmpty())
+					m_LinkTarget.DeliverLinkResult(false, "CAD returned an invalid linking response.");
+				else
+					m_LinkTarget.DeliverLinkResult(true, response.token);
+			}
 		}
 
 		if (m_Manager)
@@ -107,7 +133,7 @@ class SRP_CADRestCallback : RestCallback
 	protected void Callback_OnError(RestCallback callback)
 	{
 		PrintFormat("[ShadowRP CAD] %1 failed (HTTP %2, REST result %3)", m_RequestName, callback.GetHttpCode(), callback.GetRestResult());
-		if (m_LinkTarget)
+		if (m_LinkTarget && m_RequestName != "link.onboarding")
 			m_LinkTarget.DeliverLinkResult(false, "The CAD bridge is unavailable. Please try again.");
 		if (m_Manager)
 			m_Manager.ReleaseCallback(this);
@@ -150,6 +176,16 @@ class SRP_CADNetworkManager : ScriptComponent
 		payload.playerName = playerName;
 		payload.Pack();
 		Post("api/link/generate", payload.AsString(), "link.generate", target);
+	}
+
+	void CheckFirstJoinOnboarding(SRP_AccountLinkComponent target, string reforgerUid, string playerName)
+	{
+		SRP_CADLinkRequest payload = new SRP_CADLinkRequest();
+		payload.apiKey = m_InternalApiKey;
+		payload.reforgerUid = reforgerUid;
+		payload.playerName = playerName;
+		payload.Pack();
+		Post("api/link/onboarding", payload.AsString(), "link.onboarding", target);
 	}
 
 	void SyncUnitStatus(SRP_CADUnitStatusRequest payload)

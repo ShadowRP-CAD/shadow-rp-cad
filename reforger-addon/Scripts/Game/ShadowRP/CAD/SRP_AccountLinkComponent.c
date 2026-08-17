@@ -6,6 +6,32 @@ class SRP_AccountLinkComponentClass : ScriptComponentClass
 // Add this component to the replicated player-character prefab.
 class SRP_AccountLinkComponent : ScriptComponent
 {
+	override void OnPostInit(IEntity owner)
+	{
+		super.OnPostInit(owner);
+		RplComponent replication = RplComponent.Cast(owner.FindComponent(RplComponent));
+		if (replication && replication.IsOwner())
+			GetGame().GetCallqueue().CallLater(RequestFirstJoinLink, 4000, false);
+	}
+
+	protected void RequestFirstJoinLink()
+	{
+		Rpc(RpcAsk_FirstJoinLink);
+	}
+
+	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
+	protected void RpcAsk_FirstJoinLink()
+	{
+		IEntity player = GetOwner();
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		int playerId = playerManager.GetPlayerIdFromControlledEntity(player);
+		string playerName = playerManager.GetPlayerName(playerId);
+		string reforgerUid = SCR_PlayerIdentityUtils.GetPlayerIdentityId(player);
+		SRP_CADNetworkManager network = SRP_CADNetworkManager.GetInstance();
+		if (network && !reforgerUid.IsEmpty())
+			network.CheckFirstJoinOnboarding(this, reforgerUid, playerName);
+	}
+
 	void RequestAccountLink()
 	{
 		Rpc(RpcAsk_GenerateLink);
@@ -34,6 +60,17 @@ class SRP_AccountLinkComponent : ScriptComponent
 	void DeliverLinkResult(bool success, string value)
 	{
 		Rpc(RpcDo_ShowLinkResult, success, value);
+	}
+
+	void DeliverOnboardingCode(string token)
+	{
+		Rpc(RpcDo_ShowFirstJoinCode, token);
+	}
+
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	protected void RpcDo_ShowFirstJoinCode(string token)
+	{
+		SCR_HintManagerComponent.ShowCustomHint("Welcome to Shadow RP! Your one-time account code is " + token + ". Sign in to the CAD website and enter it within 10 minutes to secure your persistent bank, money, and investments.", "LINK YOUR SHADOW RP ACCOUNT", 30);
 	}
 
 	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]

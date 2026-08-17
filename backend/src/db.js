@@ -70,6 +70,13 @@ export function createDatabase(filename = config.databasePath) {
       expires_at TEXT NOT NULL,
       used_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS link_onboarding (
+      reforger_uid TEXT PRIMARY KEY,
+      player_name TEXT NOT NULL,
+      prompted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      linked_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      completed_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS reports (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       report_type TEXT NOT NULL CHECK(report_type IN ('INCIDENT','ARREST','CITATION')),
@@ -120,6 +127,41 @@ export function createDatabase(filename = config.databasePath) {
       total REAL NOT NULL CHECK(total > 0),
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS bank_transactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      transaction_type TEXT NOT NULL,
+      amount REAL NOT NULL,
+      memo TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS civilian_properties (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_name TEXT NOT NULL,
+      property_type TEXT NOT NULL,
+      location_grid TEXT NOT NULL,
+      declared_value REAL NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'REGISTERED',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS civilian_businesses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      business_name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'PENDING',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS civilian_requests (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      request_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      details TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'SUBMITTED',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
@@ -137,6 +179,8 @@ export function createDatabase(filename = config.databasePath) {
     CREATE INDEX IF NOT EXISTS idx_tokens_expiry ON link_tokens(expires_at);
     CREATE INDEX IF NOT EXISTS idx_market_prices_symbol_time ON market_prices(symbol, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_market_orders_user_time ON market_orders(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bank_transactions_user_time ON bank_transactions(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_civilian_requests_user_time ON civilian_requests(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at DESC);
   `);
@@ -149,8 +193,8 @@ export function createDatabase(filename = config.databasePath) {
 export function seedDatabase(db, { demo = true } = {}) {
   const exists = db.prepare('SELECT id FROM users WHERE discord_id = ?').get('demo-dispatch');
   if (demo && !exists) {
-    const user = db.prepare(`INSERT INTO users (discord_id, discord_username, role) VALUES (?, ?, ?)`)
-      .run('demo-dispatch', 'ShadowDispatch', 'ADMIN');
+    const user = db.prepare(`INSERT INTO users (discord_id, discord_username, reforger_uid, role) VALUES (?, ?, ?, ?)`)
+      .run('demo-dispatch', 'ShadowDispatch', 'demo-unit-1', 'ADMIN');
     const c1 = db.prepare(`INSERT INTO characters (user_id, first_name, last_name, alias, dob, gender, driver_license, firearm_license, warrants, priors)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(user.lastInsertRowid, 'Night', '', 'Night', '1992-04-18', 'Unspecified', 'VALID', 'CLASS_A', JSON.stringify(['FTA - speeding']), JSON.stringify(['2024-02-10: Reckless driving']));
     db.prepare(`INSERT INTO vehicles (plate, model, owner_id, is_stolen, color) VALUES (?, ?, ?, ?, ?)`)

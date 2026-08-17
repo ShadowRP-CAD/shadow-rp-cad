@@ -6,6 +6,11 @@ const parseJson = value => { try { return JSON.parse(value || '[]'); } catch { r
 const cleanString = (value, max = 500) => String(value ?? '').trim().slice(0, max);
 const cadRoles = ['LEO', 'EMS', 'DISPATCH', 'ADMIN'];
 
+function requireLinked(req, res, next) {
+  if (!req.user?.reforger_uid) return res.status(409).json({ error: 'Complete the one-time in-game account link to use persistent economy services.', code: 'ACCOUNT_LINK_REQUIRED' });
+  next();
+}
+
 function audit(db, req, action, entityType, entityId, details = {}) {
   db.prepare(`INSERT INTO audit_logs (user_id,actor_name,action,entity_type,entity_id,details,ip_address) VALUES (?,?,?,?,?,?,?)`)
     .run(req.user?.id || null, req.user?.discord_username || 'Game Server', action, entityType, entityId == null ? null : String(entityId), JSON.stringify(details), req.ip);
@@ -20,8 +25,20 @@ function rowToCall(row) {
 }
 
 function ensureEconomyAccount(db, userId) {
-  db.prepare('INSERT OR IGNORE INTO economy_accounts (user_id) VALUES (?)').run(userId);
+  const created = db.prepare('INSERT OR IGNORE INTO economy_accounts (user_id) VALUES (?)').run(userId);
+  if (created.changes) db.prepare(`INSERT INTO bank_transactions (user_id,transaction_type,amount,memo) VALUES (?,?,?,?)`).run(userId, 'OPENING_BALANCE', 25000, 'Shadow Bank resident account opened');
   return db.prepare('SELECT * FROM economy_accounts WHERE user_id = ?').get(userId);
+}
+
+function generateLinkToken(db, reforgerUid, playerName) {
+  db.prepare('DELETE FROM link_tokens WHERE reforger_uid = ? OR expires_at <= CURRENT_TIMESTAMP').run(reforgerUid);
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let token;
+  do token = Array.from({ length: 6 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
+  while (db.prepare('SELECT 1 FROM link_tokens WHERE token = ?').get(token));
+  const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+  db.prepare('INSERT INTO link_tokens (token, reforger_uid, player_name, expires_at) VALUES (?, ?, ?, ?)').run(token, reforgerUid, playerName, expiresAt);
+  return { token, expiresAt };
 }
 
 function advanceMarket(db) {
@@ -68,14 +85,20 @@ export function createApiRouter(db, events) {
     const reforgerUid = cleanString(req.body.reforgerUid, 128);
     const playerName = cleanString(req.body.playerName, 80);
     if (!reforgerUid || !playerName) return res.status(400).json({ error: 'reforgerUid and playerName are required' });
-    db.prepare('DELETE FROM link_tokens WHERE reforger_uid = ? OR expires_at <= CURRENT_TIMESTAMP').run(reforgerUid);
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let token;
-    do token = Array.from({ length: 6 }, () => alphabet[crypto.randomInt(alphabet.length)]).join('');
-    while (db.prepare('SELECT 1 FROM link_tokens WHERE token = ?').get(token));
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-    db.prepare('INSERT INTO link_tokens (token, reforger_uid, player_name, expires_at) VALUES (?, ?, ?, ?)').run(token, reforgerUid, playerName, expiresAt);
-    res.status(201).json({ token, expiresAt });
+    res.status(201).json(generateLinkToken(db, reforgerUid, playerName));
+  });
+
+  router.post('/link/onboarding', requireInternal, (req, res) => {
+    const reforgerUid = cleanString(req.body.reforgerUid, 128);
+    const playerName = cleanString(req.body.playerName, 80);
+    if (!reforgerUid || !playerName) return res.status(400).json({ error: 'reforgerUid and playerName are required' });
+    const linked = db.prepare('SELECT id FROM users WHERE reforger_uid = ?').get(reforgerUid);
+    if (linked) return res.json({ linked: true, showPrompt: false });
+    const prior = db.prepare('SELECT reforger_uid FROM link_onboarding WHERE reforger_uid = ?').get(reforgerUid);
+    if (prior) return res.json({ linked: false, showPrompt: false });
+    const generated = generateLinkToken(db, reforgerUid, playerName);
+    db.prepare('INSERT INTO link_onboarding (reforger_uid, player_name) VALUES (?, ?)').run(reforgerUid, playerName);
+    res.status(201).json({ linked: false, showPrompt: true, ...generated });
   });
 
   router.post('/link/verify', requireAuth, (req, res) => {
@@ -88,7 +111,10 @@ export function createApiRouter(db, events) {
     db.exec('BEGIN IMMEDIATE');
     try {
       db.prepare('UPDATE users SET reforger_uid = ?, steam_id = COALESCE(?, steam_id) WHERE id = ?').run(record.reforger_uid, steamId, req.user.id);
-    db.prepare('UPDATE link_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = ?').run(token);
+      db.prepare('UPDATE link_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = ?').run(token);
+      db.prepare(`INSERT INTO link_onboarding (reforger_uid,player_name,linked_user_id,completed_at)
+        VALUES (?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(reforger_uid) DO UPDATE SET linked_user_id=excluded.linked_user_id,completed_at=CURRENT_TIMESTAMP`).run(record.reforger_uid, record.player_name, req.user.id);
+      ensureEconomyAccount(db, req.user.id);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
@@ -202,9 +228,20 @@ export function createApiRouter(db, events) {
     res.status(201).json(report);
   });
 
-  router.get('/market', requireAuth, (req, res) => res.json(marketSnapshot(db, req.user.id)));
+  router.get('/market', requireAuth, (req, res) => {
+    if (!req.user.reforger_uid) {
+      advanceMarket(db);
+      const assets = db.prepare(`SELECT a.*,
+        (SELECT price FROM market_prices p WHERE p.symbol=a.symbol ORDER BY p.id DESC LIMIT 1) AS price,
+        (SELECT price FROM market_prices p WHERE p.symbol=a.symbol ORDER BY p.id DESC LIMIT 1 OFFSET 1) AS previous_price,
+        (SELECT SUM(volume) FROM market_prices p WHERE p.symbol=a.symbol AND datetime(p.recorded_at) >= datetime('now','-24 hours')) AS day_volume
+        FROM market_assets a WHERE a.is_active=1 ORDER BY a.symbol`).all().map(asset => ({ ...asset, change: Number((((asset.price-(asset.previous_price||asset.price))/(asset.previous_price||asset.price))*100).toFixed(2)), history: [] }));
+      return res.json({ assets, holdings: [], orders: [], account: null, linkRequired: true });
+    }
+    res.json({ ...marketSnapshot(db, req.user.id), linkRequired: false });
+  });
 
-  router.post('/market/trade', requireAuth, (req, res) => {
+  router.post('/market/trade', requireAuth, requireLinked, (req, res) => {
     const symbol = cleanString(req.body.symbol, 8).toUpperCase();
     const side = cleanString(req.body.side, 4).toUpperCase();
     const quantity = Number.parseInt(req.body.quantity, 10);
@@ -231,6 +268,7 @@ export function createApiRouter(db, events) {
         db.prepare('UPDATE economy_accounts SET cash_balance=cash_balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(total, req.user.id);
       }
       db.prepare('INSERT INTO market_orders (user_id,symbol,side,quantity,price,total) VALUES (?,?,?,?,?,?)').run(req.user.id, symbol, side, quantity, price, total);
+      db.prepare('INSERT INTO bank_transactions (user_id,transaction_type,amount,memo) VALUES (?,?,?,?)').run(req.user.id, side === 'BUY' ? 'STOCK_PURCHASE' : 'STOCK_SALE', side === 'BUY' ? -total : total, `${side} ${quantity} ${symbol} @ $${price.toFixed(2)}`);
       const impact = Math.min(0.012, quantity / 50000) * (side === 'BUY' ? 1 : -1);
       db.prepare('INSERT INTO market_prices (symbol,price,volume) VALUES (?,?,?)').run(symbol, Number(Math.max(1, price * (1 + impact)).toFixed(2)), quantity);
       db.exec('COMMIT');
@@ -242,6 +280,43 @@ export function createApiRouter(db, events) {
     events.broadcast('market.trade', { symbol, side, quantity });
     audit(db, req, 'MARKET_ORDER', 'MARKET', symbol, { side, quantity, price, total });
     res.status(201).json(marketSnapshot(db, req.user.id));
+  });
+
+  router.get('/civilian/portal', requireAuth, (req, res) => {
+    const characters = db.prepare('SELECT * FROM characters WHERE user_id=? ORDER BY created_at DESC').all(req.user.id).map(rowToCharacter);
+    const vehicles = db.prepare(`SELECT v.*,COALESCE(c.alias,trim(c.first_name||' '||c.last_name)) owner_name FROM vehicles v JOIN characters c ON c.id=v.owner_id WHERE c.user_id=? ORDER BY v.id DESC`).all(req.user.id);
+    if (!req.user.reforger_uid) return res.json({ linked: false, characters, vehicles, account: null, holdings: [], properties: [], businesses: [], requests: [], transactions: [] });
+    const market = marketSnapshot(db, req.user.id);
+    res.json({ linked: true, characters, vehicles, account: market.account, holdings: market.holdings,
+      properties: db.prepare('SELECT * FROM civilian_properties WHERE user_id=? ORDER BY id DESC').all(req.user.id),
+      businesses: db.prepare('SELECT * FROM civilian_businesses WHERE user_id=? ORDER BY id DESC').all(req.user.id),
+      requests: db.prepare('SELECT * FROM civilian_requests WHERE user_id=? ORDER BY id DESC').all(req.user.id),
+      transactions: db.prepare('SELECT * FROM bank_transactions WHERE user_id=? ORDER BY id DESC LIMIT 30').all(req.user.id)
+    });
+  });
+
+  router.post('/civilian/properties', requireAuth, requireLinked, (req, res) => {
+    const name = cleanString(req.body.propertyName, 80), type = cleanString(req.body.propertyType, 40), grid = cleanString(req.body.locationGrid, 32), value = Math.max(0, Number(req.body.declaredValue) || 0);
+    if (!name || !type || !grid) return res.status(400).json({ error: 'Property name, type, and grid are required' });
+    const result = db.prepare('INSERT INTO civilian_properties (user_id,property_name,property_type,location_grid,declared_value) VALUES (?,?,?,?,?)').run(req.user.id, name, type, grid, value);
+    audit(db, req, 'PROPERTY_REGISTERED', 'PROPERTY', result.lastInsertRowid, { name, type, grid });
+    res.status(201).json(db.prepare('SELECT * FROM civilian_properties WHERE id=?').get(result.lastInsertRowid));
+  });
+
+  router.post('/civilian/businesses', requireAuth, requireLinked, (req, res) => {
+    const name = cleanString(req.body.businessName, 80), category = cleanString(req.body.category, 50);
+    if (!name || !category) return res.status(400).json({ error: 'Business name and category are required' });
+    const result = db.prepare('INSERT INTO civilian_businesses (user_id,business_name,category) VALUES (?,?,?)').run(req.user.id, name, category);
+    audit(db, req, 'BUSINESS_APPLICATION', 'BUSINESS', result.lastInsertRowid, { name, category });
+    res.status(201).json(db.prepare('SELECT * FROM civilian_businesses WHERE id=?').get(result.lastInsertRowid));
+  });
+
+  router.post('/civilian/requests', requireAuth, requireLinked, (req, res) => {
+    const type = cleanString(req.body.requestType, 40), title = cleanString(req.body.title, 100), details = cleanString(req.body.details, 1200);
+    if (!type || !title || !details) return res.status(400).json({ error: 'Service, title, and details are required' });
+    const result = db.prepare('INSERT INTO civilian_requests (user_id,request_type,title,details) VALUES (?,?,?,?)').run(req.user.id, type, title, details);
+    audit(db, req, 'CIVIC_REQUEST_SUBMITTED', 'CIVIC_REQUEST', result.lastInsertRowid, { type, title });
+    res.status(201).json(db.prepare('SELECT * FROM civilian_requests WHERE id=?').get(result.lastInsertRowid));
   });
 
   router.get('/admin/overview', requireAuth, requireRole('ADMIN'), (_req, res) => {

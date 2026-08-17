@@ -26,11 +26,12 @@ export default function Market() {
   if (loading) return <div className="market-loading"><BarChart3/><span>Opening Shadow Exchange…</span></div>;
   return <div>
     <div className="page-heading"><div><p className="eyebrow">SHADOW EXCHANGE · VIRTUAL ECONOMY</p><h1>Market terminal</h1><p>Persistent, fictional server economy. Prices and portfolios survive restarts.</p></div><button className="icon-button" onClick={load}><RefreshCw size={17}/> Market sync</button></div>
+    {data.linkRequired && <div className="civilian-lock"><Landmark/><div><strong>Trading is locked until your one-time game link is complete</strong><p>You can browse live prices now. Link your Reforger identity to access persistent cash, holdings, and orders.</p></div><a className="button primary" href="#/linking">Link account</a></div>}
     {message && <div className="notice market-notice">{message}</div>}
     <section className="market-hero">
-      <div><span>NET WORTH</span><strong>{money(data.account.netWorth)}</strong><small>Virtual currency · no real-world value</small></div>
-      <div><WalletCards/><span>LIQUID CASH</span><strong>{money(data.account.cash)}</strong></div>
-      <div><Landmark/><span>INVESTED</span><strong>{money(data.account.holdingsValue)}</strong></div>
+      <div><span>NET WORTH</span><strong>{data.account?money(data.account.netWorth):'LINK TO OPEN'}</strong><small>Virtual currency · no real-world value</small></div>
+      <div><WalletCards/><span>LIQUID CASH</span><strong>{data.account?money(data.account.cash):'LOCKED'}</strong></div>
+      <div><Landmark/><span>INVESTED</span><strong>{data.account?money(data.account.holdingsValue):'LOCKED'}</strong></div>
       <div><Coins/><span>OPEN POSITIONS</span><strong>{data.holdings.length}</strong></div>
     </section>
     <div className="market-layout">
@@ -44,7 +45,7 @@ export default function Market() {
         <p>{asset.description}</p><div className="quote"><div><span>LAST PRICE</span><strong>{money(asset.price)}</strong></div><div><span>24H VOLUME</span><strong>{Number(asset.day_volume || 0).toLocaleString()}</strong></div></div>
         <form onSubmit={submitTrade}><div className="trade-toggle"><button type="button" className={trade.side === 'BUY' ? 'active buy' : ''} onClick={() => setTrade({...trade,side:'BUY'})}>Buy</button><button type="button" className={trade.side === 'SELL' ? 'active sell' : ''} onClick={() => setTrade({...trade,side:'SELL'})}>Sell</button></div>
           <label>Shares <span>Owned: {holding?.quantity || 0}</span><input type="number" min="1" max="500" value={trade.quantity} onChange={event => setTrade({...trade,quantity:event.target.value})}/></label>
-          <div className="trade-total"><span>Estimated total</span><strong>{money(asset.price * Number(trade.quantity || 0))}</strong></div><button className={`button wide ${trade.side === 'BUY' ? 'market-buy' : 'market-sell'}`}>Place {trade.side.toLowerCase()} order</button>
+          <div className="trade-total"><span>Estimated total</span><strong>{money(asset.price * Number(trade.quantity || 0))}</strong></div><button disabled={data.linkRequired} className={`button wide ${trade.side === 'BUY' ? 'market-buy' : 'market-sell'}`}>{data.linkRequired?'Link account to trade':`Place ${trade.side.toLowerCase()} order`}</button>
         </form></aside>}
     </div>
     <div className="portfolio-grid"><section className="panel"><div className="panel-heading"><div>Your portfolio</div><small>LIVE VALUATION</small></div><div className="data-table"><div className="data-row header"><span>Asset</span><span>Shares</span><span>Avg. cost</span><span>Market value</span><span>P/L</span></div>{data.holdings.length ? data.holdings.map(item => { const pnl=(item.price-item.average_cost)*item.quantity; return <div className="data-row" key={item.symbol}><b>{item.symbol}</b><span>{item.quantity}</span><span>{money(item.average_cost)}</span><span>{money(item.price*item.quantity)}</span><span className={pnl >= 0 ? 'gain' : 'loss'}>{pnl >= 0 ? '+' : ''}{money(pnl)}</span></div> }) : <div className="empty"><BarChart3/><span>No positions yet</span></div>}</div></section>
