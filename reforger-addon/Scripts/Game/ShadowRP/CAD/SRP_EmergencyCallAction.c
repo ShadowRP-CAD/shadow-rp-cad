@@ -38,36 +38,3 @@ class SRP_EmergencyCallAction : ScriptedUserAction
 		return true;
 	}
 }
-
-// Optional interaction action for an account-link kiosk/terminal.
-[BaseContainerProps()]
-class SRP_AccountLinkAction : ScriptedUserAction
-{
-	override void PerformAction(IEntity pOwnerEntity, IEntity pUserEntity)
-	{
-		SRP_AccountLinkComponent component = SRP_AccountLinkComponent.Cast(pUserEntity.FindComponent(SRP_AccountLinkComponent));
-		if (component)
-			component.RequestAccountLink();
-	}
-
-	override bool CanBeShownScript(IEntity user)
-	{
-		return user != null;
-	}
-
-	override bool CanBePerformedScript(IEntity user)
-	{
-		return user != null;
-	}
-
-	override bool GetActionNameScript(out string outName)
-	{
-		outName = "Generate Shadow RP CAD link code";
-		return true;
-	}
-
-	override bool HasLocalEffectOnlyScript()
-	{
-		return true;
-	}
-}

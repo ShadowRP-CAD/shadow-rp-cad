@@ -16,10 +16,9 @@ This source addon is configured for the live Shadow RP backend and uses project 
 3. Open every playable player-character prefab used by Shadow RP.
 4. Confirm it already has an `RplComponent`, then add `SRP_AccountLinkComponent` and `SRP_DutySyncComponent`.
 5. Save each player prefab.
-6. Drag `Prefabs/ShadowRP/CAD/SRP_AccountLinkTerminal.et` into the arrival/spawn area. This recovery terminal issues replacement codes when a first-join code expires.
-7. Save the world and test in **Dedicated Server** mode, not only local preview.
+6. Save the world and test in **Dedicated Server** mode, not only local preview. No terminal or placed interaction is required.
 
-The player automatically receives a code four seconds after the first replicated character is created. The backend records that prompt permanently, so it is not displayed again on reconnect. The recovery terminal can issue another expiring code without resetting that one-time flag.
+The player automatically receives a code four seconds after the first replicated character is created. It appears as a top-screen message for 30 seconds. The backend records that prompt permanently, so it is not displayed again on reconnect after that identity has received its code.
 
 ## Test checklist
 
@@ -28,8 +27,9 @@ The player automatically receives a code four seconds after the first replicated
 3. Sign in at `https://shadowrp-cad.github.io/shadow-rp-cad/#/linking` and enter the code.
 4. Confirm the website banner disappears and Civilian Hub banking unlocks.
 5. Reconnect and confirm the automatic message does not repeat.
-6. Use the wall-phone linking terminal and confirm a replacement code is generated.
-7. Check dedicated-server logs for `[ShadowRP CAD] link.onboarding succeeded`.
+6. Check dedicated-server logs for `[ShadowRP CAD] link.onboarding succeeded`.
+
+If a player lets the code expire before entering it, an administrator must clear that UID from `link_onboarding` before the next join. This preserves the strict one-message-only behavior.
 
 ## Publish and add to the server
 

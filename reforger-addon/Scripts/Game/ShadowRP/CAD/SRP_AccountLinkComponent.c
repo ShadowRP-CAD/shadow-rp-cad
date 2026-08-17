@@ -32,30 +32,6 @@ class SRP_AccountLinkComponent : ScriptComponent
 			network.CheckFirstJoinOnboarding(this, reforgerUid, playerName);
 	}
 
-	void RequestAccountLink()
-	{
-		Rpc(RpcAsk_GenerateLink);
-	}
-
-	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RpcAsk_GenerateLink()
-	{
-		IEntity player = GetOwner();
-		PlayerManager playerManager = GetGame().GetPlayerManager();
-		int playerId = playerManager.GetPlayerIdFromControlledEntity(player);
-		string playerName = playerManager.GetPlayerName(playerId);
-		string reforgerUid = SCR_PlayerIdentityUtils.GetPlayerIdentityId(player);
-
-		SRP_CADNetworkManager network = SRP_CADNetworkManager.GetInstance();
-		if (!network || reforgerUid.IsEmpty())
-		{
-			DeliverLinkResult(false, "Unable to read your Reforger identity.");
-			return;
-		}
-
-		network.GenerateLinkToken(this, reforgerUid, playerName);
-	}
-
 	// Called on the server by the retained REST callback.
 	void DeliverLinkResult(bool success, string value)
 	{

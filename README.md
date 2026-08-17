@@ -96,11 +96,11 @@ Allowed roles are `CIVILIAN`, `LEO`, `EMS`, `DISPATCH`, and `ADMIN`. A productio
 
 ## 3. Account linking flow
 
-1. The player uses `SRP_AccountLinkAction` on an in-game linking terminal.
-2. The player-owned component sends a reliable RPC to the server authority.
-3. The server derives the player's Bohemia identity ID and posts to `/api/link/generate`.
+1. On the player's first join, `SRP_AccountLinkComponent` automatically sends a reliable RPC to the server authority.
+2. The server derives the player's Bohemia identity ID and posts to `/api/link/onboarding`.
+3. The backend verifies that this identity has never received an automatic linking message.
 4. The API stores a random six-character, single-use token for 10 minutes.
-5. The server sends the code only to that entity's owner and shows a hint.
+5. The server sends the code only to that entity's owner and shows a 30-second top-screen hint. No terminal is used.
 6. The player signs in to the CAD and enters the code on **Account link**.
 7. `/api/link/verify` binds the Reforger UID to the authenticated Discord user and consumes the token atomically.
 
@@ -114,7 +114,8 @@ All browser requests use the session cookie. The three in-game POST routes requi
 |---|---|---|---|
 | GET | `/api/health` | Public | Health check |
 | GET | `/api/me` | Signed in | Current user |
-| POST | `/api/link/generate` | Internal key | Generate six-character token |
+| POST | `/api/link/onboarding` | Internal key | Generate the one-time first-join token/message |
+| POST | `/api/link/generate` | Internal key | Administrative recovery token |
 | POST | `/api/link/verify` | Signed in | Consume token and link identity |
 | POST | `/api/cad/call911` | Internal key | Ingest emergency call |
 | POST | `/api/cad/unit-status` | Internal key | Upsert unit, duty state, and position |
@@ -176,7 +177,7 @@ Workbench steps:
 3. In your game-mode prefab, add `SRP_CADNetworkManager` to the replicated game-mode entity. Set `Api Base Url` to the public HTTPS API origin with no trailing slash and set the internal key.
 4. Ensure the game-mode entity has an `RplComponent`. Bohemia requires replicated entities for RPC delivery.
 5. Add `SRP_AccountLinkComponent` and `SRP_DutySyncComponent` to the replicated player-character prefab.
-6. Add an `ActionsManagerComponent` and valid action context to a kiosk/payphone prefab. Add `SRP_AccountLinkAction` to the linking kiosk and `SRP_EmergencyCallAction` to the payphone/radio object. Give each action a `UIInfo` label in Workbench.
+6. No linking terminal is required. The message is automatic. `SRP_EmergencyCallAction` remains optional for payphone/radio objects.
 7. Locker or radial menu code should call the local player's duty component, for example:
 
 ```c
