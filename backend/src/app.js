@@ -15,7 +15,10 @@ export function createApp(db, events = { broadcast() {} }) {
   app.use(helmet({ crossOriginResourcePolicy: false }));
   app.use(cors({ origin: frontendOrigin, credentials: true }));
   // Enfusion RestContext may send a JSON string without an application/json header.
-  app.use(express.json({ limit: '256kb', type: ['application/json', 'text/plain', 'application/octet-stream'] }));
+  app.use(express.json({
+    limit: '256kb',
+    type: ['application/json', 'text/plain', 'application/octet-stream', 'application/x-www-form-urlencoded']
+  }));
   app.use(rateLimit({ windowMs: 60_000, limit: 240, standardHeaders: true, legacyHeaders: false }));
   const sessionMiddleware = session({
     name: 'srp.sid',
