@@ -95,7 +95,14 @@ export function createApiRouter(db, events) {
     const linked = db.prepare('SELECT id FROM users WHERE reforger_uid = ?').get(reforgerUid);
     if (linked) return res.json({ linked: true, showPrompt: false });
     const prior = db.prepare('SELECT reforger_uid FROM link_onboarding WHERE reforger_uid = ?').get(reforgerUid);
-    if (prior) return res.json({ linked: false, showPrompt: false });
+    if (prior) {
+      const activeToken = db.prepare(`SELECT token, expires_at AS expiresAt FROM link_tokens
+        WHERE reforger_uid = ? AND used_at IS NULL AND expires_at > ? LIMIT 1`)
+        .get(reforgerUid, new Date().toISOString());
+      if (activeToken) return res.json({ linked: false, showPrompt: true, ...activeToken });
+      const regenerated = generateLinkToken(db, reforgerUid, playerName);
+      return res.json({ linked: false, showPrompt: true, ...regenerated });
+    }
     const generated = generateLinkToken(db, reforgerUid, playerName);
     db.prepare('INSERT INTO link_onboarding (reforger_uid, player_name) VALUES (?, ?)').run(reforgerUid, playerName);
     res.status(201).json({ linked: false, showPrompt: true, ...generated });
