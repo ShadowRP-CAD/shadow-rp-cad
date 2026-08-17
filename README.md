@@ -201,6 +201,7 @@ The app uses hash routing, so it does not require rewrite rules.
 3. Push to `main` or manually run **Deploy frontend to GitHub Pages**.
 
 The included workflow automatically supplies the repository subpath to Vite.
+For this repository, set backend `FRONTEND_URL=https://shadowrp-cad.github.io/shadow-rp-cad/`; the backend derives the origin used by CORS while retaining the full project URL for OAuth redirects.
 
 ## 8. Backend deployment
 

@@ -10,9 +10,10 @@ import { SQLiteSessionStore } from './sessionStore.js';
 
 export function createApp(db, events = { broadcast() {} }) {
   const app = express();
+  const frontendOrigin = new URL(config.frontendUrl).origin;
   app.set('trust proxy', 1);
   app.use(helmet({ crossOriginResourcePolicy: false }));
-  app.use(cors({ origin: config.frontendUrl, credentials: true }));
+  app.use(cors({ origin: frontendOrigin, credentials: true }));
   // Enfusion RestContext may send a JSON string without an application/json header.
   app.use(express.json({ limit: '256kb', type: ['application/json', 'text/plain', 'application/octet-stream'] }));
   app.use(rateLimit({ windowMs: 60_000, limit: 240, standardHeaders: true, legacyHeaders: false }));
