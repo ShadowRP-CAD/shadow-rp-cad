@@ -1,5 +1,6 @@
 import { Activity, ChartCandlestick, FileText, IdCard, Landmark, LayoutDashboard, Link2, LogOut, Map, Search, Shield, ShieldCheck } from 'lucide-react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
+import MusicPlayer from './MusicPlayer.jsx';
 
 const links = [
   ['/', LayoutDashboard, 'Dispatch'], ['/lookup', Search, 'Records'], ['/map', Map, 'Live map'],
@@ -20,5 +21,6 @@ export default function Shell({ user, onLogout }) {
       {!user.reforger_uid&&<div className="global-link-banner"><Link2/><div><strong>Finish your one-time Shadow RP account link</strong><span>Secure your persistent bank, money, investments, property, and in-game identity.</span></div><Link to="/linking">Enter link code</Link></div>}
       <main className="content"><Outlet /></main>
     </div>
+    <MusicPlayer />
   </div>;
 }
