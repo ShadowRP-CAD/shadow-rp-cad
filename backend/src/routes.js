@@ -24,10 +24,15 @@ function rowToCall(row) {
   return row && { ...row, assigned_units: parseJson(row.assigned_units) };
 }
 
-function ensureEconomyAccount(db, userId) {
-  const created = db.prepare('INSERT OR IGNORE INTO economy_accounts (user_id) VALUES (?)').run(userId);
-  if (created.changes) db.prepare(`INSERT INTO bank_transactions (user_id,transaction_type,amount,memo) VALUES (?,?,?,?)`).run(userId, 'OPENING_BALANCE', 25000, 'Shadow Bank resident account opened');
+function ensureEconomyAccount(db, userId, openingBalance = 25000, memo = 'Shadow Bank resident account opened') {
+  const initialBalance = Math.max(0, Math.round(Number(openingBalance) || 0));
+  const created = db.prepare('INSERT OR IGNORE INTO economy_accounts (user_id, cash_balance) VALUES (?, ?)').run(userId, initialBalance);
+  if (created.changes) db.prepare(`INSERT INTO bank_transactions (user_id,transaction_type,amount,memo) VALUES (?,?,?,?)`).run(userId, 'OPENING_BALANCE', initialBalance, memo);
   return db.prepare('SELECT * FROM economy_accounts WHERE user_id = ?').get(userId);
+}
+
+function atmStateForUser(db, userId) {
+  return db.prepare(`SELECT s.* FROM atm_bank_state s JOIN users u ON u.reforger_uid=s.reforger_uid WHERE u.id=?`).get(userId);
 }
 
 function generateLinkToken(db, reforgerUid, playerName) {
@@ -58,6 +63,7 @@ function advanceMarket(db) {
 function marketSnapshot(db, userId) {
   advanceMarket(db);
   const account = ensureEconomyAccount(db, userId);
+  const atmState = atmStateForUser(db, userId);
   const assets = db.prepare(`SELECT a.*,
     (SELECT price FROM market_prices p WHERE p.symbol=a.symbol ORDER BY p.id DESC LIMIT 1) AS price,
     (SELECT price FROM market_prices p WHERE p.symbol=a.symbol ORDER BY p.id DESC LIMIT 1 OFFSET 1) AS previous_price,
@@ -72,7 +78,13 @@ function marketSnapshot(db, userId) {
     FROM market_holdings h WHERE h.user_id=? AND h.quantity>0 ORDER BY h.symbol`).all(userId);
   const orders = db.prepare('SELECT * FROM market_orders WHERE user_id=? ORDER BY id DESC LIMIT 20').all(userId);
   const holdingsValue = holdings.reduce((sum, item) => sum + item.quantity * item.price, 0);
-  return { assets, holdings, orders, account: { cash: account.cash_balance, holdingsValue, netWorth: account.cash_balance + holdingsValue } };
+  return { assets, holdings, orders, account: {
+    cash: account.cash_balance,
+    holdingsValue,
+    netWorth: account.cash_balance + holdingsValue,
+    bankSource: atmState ? 'ATM_BANK_MANAGER' : 'AWAITING_GAME_SYNC',
+    syncedAt: atmState?.last_seen_at || null
+  } };
 }
 
 export function createApiRouter(db, events) {
@@ -121,7 +133,10 @@ export function createApiRouter(db, events) {
       db.prepare('UPDATE link_tokens SET used_at = CURRENT_TIMESTAMP WHERE token = ?').run(token);
       db.prepare(`INSERT INTO link_onboarding (reforger_uid,player_name,linked_user_id,completed_at)
         VALUES (?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(reforger_uid) DO UPDATE SET linked_user_id=excluded.linked_user_id,completed_at=CURRENT_TIMESTAMP`).run(record.reforger_uid, record.player_name, req.user.id);
-      ensureEconomyAccount(db, req.user.id);
+      const atmState = db.prepare('SELECT observed_balance, target_balance, pending_delta FROM atm_bank_state WHERE reforger_uid=?').get(record.reforger_uid);
+      const linkedBalance = atmState ? (atmState.target_balance ?? atmState.observed_balance) + atmState.pending_delta : 0;
+      ensureEconomyAccount(db, req.user.id, linkedBalance, atmState ? 'ATM Bank Manager account linked' : 'Awaiting first ATM Bank Manager sync');
+      if (atmState) db.prepare('UPDATE economy_accounts SET cash_balance=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(Math.max(0, linkedBalance), req.user.id);
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
@@ -129,6 +144,50 @@ export function createApiRouter(db, events) {
     }
     audit(db, req, 'ACCOUNT_LINKED', 'USER', req.user.id, { reforgerUid: record.reforger_uid, playerAlias: record.player_name });
     res.json({ linked: true, reforgerUid: record.reforger_uid, playerName: record.player_name });
+  });
+
+  router.post('/economy/atm-sync', requireInternal, (req, res) => {
+    const reforgerUid = cleanString(req.body.reforgerUid, 128);
+    const playerName = cleanString(req.body.playerName, 80);
+    const observedBalance = Number(req.body.bankBalance);
+    if (!reforgerUid || !playerName || !Number.isInteger(observedBalance) || observedBalance < 0 || observedBalance > 1_000_000_000) {
+      return res.status(400).json({ error: 'A valid reforgerUid, playerName, and integer bankBalance are required' });
+    }
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare(`INSERT INTO atm_bank_state (reforger_uid,observed_balance,last_seen_at) VALUES (?,?,CURRENT_TIMESTAMP)
+        ON CONFLICT(reforger_uid) DO UPDATE SET observed_balance=excluded.observed_balance,last_seen_at=CURRENT_TIMESTAMP`).run(reforgerUid, observedBalance);
+      let state = db.prepare('SELECT * FROM atm_bank_state WHERE reforger_uid=?').get(reforgerUid);
+      let gameBalance = observedBalance;
+      let apply = false;
+
+      if (state.target_balance != null) {
+        if (observedBalance === state.target_balance) {
+          db.prepare('UPDATE atm_bank_state SET target_balance=NULL WHERE reforger_uid=?').run(reforgerUid);
+        } else {
+          gameBalance = state.target_balance;
+          apply = true;
+        }
+      } else if (state.pending_delta !== 0) {
+        gameBalance = Math.max(0, observedBalance + state.pending_delta);
+        apply = gameBalance !== observedBalance;
+        db.prepare('UPDATE atm_bank_state SET pending_delta=0,target_balance=? WHERE reforger_uid=?').run(gameBalance, reforgerUid);
+      }
+
+      state = db.prepare('SELECT * FROM atm_bank_state WHERE reforger_uid=?').get(reforgerUid);
+      const effectiveBalance = Math.max(0, (state.target_balance ?? state.observed_balance) + state.pending_delta);
+      const user = db.prepare('SELECT id FROM users WHERE reforger_uid=?').get(reforgerUid);
+      if (user) {
+        ensureEconomyAccount(db, user.id, effectiveBalance, 'ATM Bank Manager account connected');
+        db.prepare('UPDATE economy_accounts SET cash_balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(effectiveBalance, user.id);
+      }
+      db.exec('COMMIT');
+      res.json({ linked: Boolean(user), balance: gameBalance, apply, syncedAt: state.last_seen_at });
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
   });
 
   router.post('/cad/call911', requireInternal, (req, res) => {
@@ -257,9 +316,11 @@ export function createApiRouter(db, events) {
     if (!asset) return res.status(404).json({ error: 'Market asset not found' });
     advanceMarket(db);
     const price = db.prepare('SELECT price FROM market_prices WHERE symbol=? ORDER BY id DESC LIMIT 1').get(symbol).price;
-    const total = Number((price * quantity).toFixed(2));
+    const total = Math.max(1, Math.round(price * quantity));
     db.exec('BEGIN IMMEDIATE');
     try {
+      const atmState = atmStateForUser(db, req.user.id);
+      if (!atmState) throw new Error('ATM bank has not synced. Join the game server before trading.');
       const account = ensureEconomyAccount(db, req.user.id);
       const holding = db.prepare('SELECT * FROM market_holdings WHERE user_id=? AND symbol=?').get(req.user.id, symbol) || { quantity: 0, average_cost: 0 };
       if (side === 'BUY') {
@@ -269,10 +330,12 @@ export function createApiRouter(db, events) {
         db.prepare(`INSERT INTO market_holdings (user_id,symbol,quantity,average_cost) VALUES (?,?,?,?)
           ON CONFLICT(user_id,symbol) DO UPDATE SET quantity=excluded.quantity, average_cost=excluded.average_cost`).run(req.user.id, symbol, nextQuantity, averageCost);
         db.prepare('UPDATE economy_accounts SET cash_balance=cash_balance-?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(total, req.user.id);
+        db.prepare('UPDATE atm_bank_state SET pending_delta=pending_delta-? WHERE reforger_uid=?').run(total, req.user.reforger_uid);
       } else {
         if (holding.quantity < quantity) throw new Error('Not enough shares to sell');
         db.prepare('UPDATE market_holdings SET quantity=quantity-? WHERE user_id=? AND symbol=?').run(quantity, req.user.id, symbol);
         db.prepare('UPDATE economy_accounts SET cash_balance=cash_balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(total, req.user.id);
+        db.prepare('UPDATE atm_bank_state SET pending_delta=pending_delta+? WHERE reforger_uid=?').run(total, req.user.reforger_uid);
       }
       db.prepare('INSERT INTO market_orders (user_id,symbol,side,quantity,price,total) VALUES (?,?,?,?,?,?)').run(req.user.id, symbol, side, quantity, price, total);
       db.prepare('INSERT INTO bank_transactions (user_id,transaction_type,amount,memo) VALUES (?,?,?,?)').run(req.user.id, side === 'BUY' ? 'STOCK_PURCHASE' : 'STOCK_SALE', side === 'BUY' ? -total : total, `${side} ${quantity} ${symbol} @ $${price.toFixed(2)}`);
@@ -281,7 +344,7 @@ export function createApiRouter(db, events) {
       db.exec('COMMIT');
     } catch (error) {
       db.exec('ROLLBACK');
-      if (['Insufficient virtual cash','Not enough shares to sell'].includes(error.message)) return res.status(409).json({ error: error.message });
+      if (['Insufficient virtual cash','Not enough shares to sell','ATM bank has not synced. Join the game server before trading.'].includes(error.message)) return res.status(409).json({ error: error.message });
       throw error;
     }
     events.broadcast('market.trade', { symbol, side, quantity });
@@ -418,8 +481,24 @@ export function createApiRouter(db, events) {
   router.patch('/admin/economy/:userId', requireAuth, requireRole('ADMIN'), (req, res) => {
     const cash = Number(req.body.cashBalance);
     if (!Number.isFinite(cash) || cash < 0 || cash > 100000000) return res.status(400).json({ error: 'Cash balance must be between 0 and 100,000,000' });
-    ensureEconomyAccount(db, req.params.userId); db.prepare('UPDATE economy_accounts SET cash_balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(Number(cash.toFixed(2)), req.params.userId);
-    audit(db, req, 'ECONOMY_BALANCE_CHANGED', 'USER', req.params.userId, { cashBalance: cash }); res.json({ userId: Number(req.params.userId), cashBalance: cash });
+    const targetCash = Math.round(cash);
+    const user = db.prepare('SELECT id,reforger_uid FROM users WHERE id=?').get(req.params.userId);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const atmState = user.reforger_uid && db.prepare('SELECT * FROM atm_bank_state WHERE reforger_uid=?').get(user.reforger_uid);
+    if (!atmState) return res.status(409).json({ error: 'This player must join the game once before their ATM balance can be adjusted.' });
+    const current = ensureEconomyAccount(db, user.id, atmState.observed_balance);
+    const delta = targetCash - current.cash_balance;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      db.prepare('UPDATE economy_accounts SET cash_balance=?,updated_at=CURRENT_TIMESTAMP WHERE user_id=?').run(targetCash, user.id);
+      db.prepare('UPDATE atm_bank_state SET pending_delta=pending_delta+? WHERE reforger_uid=?').run(delta, user.reforger_uid);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+    audit(db, req, 'ATM_BALANCE_ADJUSTMENT_QUEUED', 'USER', req.params.userId, { previousBalance: current.cash_balance, cashBalance: targetCash, delta });
+    res.json({ userId: Number(req.params.userId), cashBalance: targetCash, queuedForAtm: true });
   });
 
   return router;

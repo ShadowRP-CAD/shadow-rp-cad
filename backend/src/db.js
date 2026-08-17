@@ -110,6 +110,13 @@ export function createDatabase(filename = config.databasePath) {
       cash_balance REAL NOT NULL DEFAULT 25000 CHECK(cash_balance >= 0),
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS atm_bank_state (
+      reforger_uid TEXT PRIMARY KEY,
+      observed_balance INTEGER NOT NULL DEFAULT 0 CHECK(observed_balance >= 0),
+      pending_delta INTEGER NOT NULL DEFAULT 0,
+      target_balance INTEGER CHECK(target_balance IS NULL OR target_balance >= 0),
+      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS market_holdings (
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       symbol TEXT NOT NULL REFERENCES market_assets(symbol) ON DELETE CASCADE,
@@ -179,6 +186,7 @@ export function createDatabase(filename = config.databasePath) {
     CREATE INDEX IF NOT EXISTS idx_tokens_expiry ON link_tokens(expires_at);
     CREATE INDEX IF NOT EXISTS idx_market_prices_symbol_time ON market_prices(symbol, recorded_at DESC);
     CREATE INDEX IF NOT EXISTS idx_market_orders_user_time ON market_orders(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_atm_bank_state_seen ON atm_bank_state(last_seen_at DESC);
     CREATE INDEX IF NOT EXISTS idx_bank_transactions_user_time ON bank_transactions(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_civilian_requests_user_time ON civilian_requests(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at DESC);

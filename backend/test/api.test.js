@@ -39,15 +39,29 @@ describe('Shadow RP CAD API', () => {
     await agent.post('/api/link/verify').send({ token: generated.body.token }).expect(400);
   });
 
-  it('only emits the automatic first-join code once per Reforger identity', async () => {
+  it('repeats the active code until the Reforger identity is linked', async () => {
     const first = await request(app).post('/api/link/onboarding').set('x-api-key', 'test-key')
       .send({ reforgerUid: 'new-player-777', playerName: 'Ghost' }).expect(201);
     assert.equal(first.body.showPrompt, true);
     assert.match(first.body.token, /^[A-Z0-9]{6}$/);
     const reconnect = await request(app).post('/api/link/onboarding').set('x-api-key', 'test-key')
       .send({ reforgerUid: 'new-player-777', playerName: 'Ghost' }).expect(200);
-    assert.equal(reconnect.body.showPrompt, false);
-    assert.equal(reconnect.body.token, undefined);
+    assert.equal(reconnect.body.showPrompt, true);
+    assert.equal(reconnect.body.token, first.body.token);
+  });
+
+  it('accepts Enfusion RestContext JSON sent with a form content type', async () => {
+    const response = await request(app)
+      .post('/api/link/onboarding')
+      .set('Content-Type', 'application/x-www-form-urlencoded')
+      .send(JSON.stringify({
+        apiKey: 'test-key',
+        reforgerUid: 'enfusion-player-888',
+        playerName: 'Reforger Player'
+      }))
+      .expect(201);
+    assert.equal(response.body.showPrompt, true);
+    assert.match(response.body.token, /^[A-Z0-9]{6}$/);
   });
 
   it('ingests calls and returns the dispatch dashboard', async () => {
@@ -71,12 +85,28 @@ describe('Shadow RP CAD API', () => {
     assert.equal(created.body.last_name, '');
   });
 
-  it('persists virtual stock purchases and portfolio balances', async () => {
+  it('uses the live ATM Bank Manager balance for stock purchases', async () => {
+    const synced = await request(app).post('/api/economy/atm-sync').set('x-api-key', 'test-key').send({
+      reforgerUid: 'reforger-123', playerName: 'ShadowDispatch', bankBalance: 43210
+    }).expect(200);
+    assert.equal(synced.body.linked, true);
+    assert.equal(synced.body.balance, 43210);
     const market = await agent.get('/api/market').expect(200);
     assert.equal(market.body.assets.length, 6);
+    assert.equal(market.body.account.cash, 43210);
+    assert.equal(market.body.account.bankSource, 'ATM_BANK_MANAGER');
     const bought = await agent.post('/api/market/trade').send({ symbol: 'SHDW', side: 'BUY', quantity: 3 }).expect(201);
     assert.equal(bought.body.holdings.find(item => item.symbol === 'SHDW').quantity, 3);
     assert.ok(bought.body.account.cash < market.body.account.cash);
+    const applied = await request(app).post('/api/economy/atm-sync').set('x-api-key', 'test-key').send({
+      reforgerUid: 'reforger-123', playerName: 'ShadowDispatch', bankBalance: 43210
+    }).expect(200);
+    assert.equal(applied.body.apply, true);
+    assert.equal(applied.body.balance, bought.body.account.cash);
+    const acknowledged = await request(app).post('/api/economy/atm-sync').set('x-api-key', 'test-key').send({
+      reforgerUid: 'reforger-123', playerName: 'ShadowDispatch', bankBalance: applied.body.balance
+    }).expect(200);
+    assert.equal(acknowledged.body.apply, false);
   });
 
   it('persists linked civilian property, business, and government services', async () => {

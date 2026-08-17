@@ -29,8 +29,8 @@ export default function Market() {
     {data.linkRequired && <div className="civilian-lock"><Landmark/><div><strong>Trading is locked until your one-time game link is complete</strong><p>You can browse live prices now. Link your Reforger identity to access persistent cash, holdings, and orders.</p></div><a className="button primary" href="#/linking">Link account</a></div>}
     {message && <div className="notice market-notice">{message}</div>}
     <section className="market-hero">
-      <div><span>NET WORTH</span><strong>{data.account?money(data.account.netWorth):'LINK TO OPEN'}</strong><small>Virtual currency · no real-world value</small></div>
-      <div><WalletCards/><span>LIQUID CASH</span><strong>{data.account?money(data.account.cash):'LOCKED'}</strong></div>
+      <div><span>NET WORTH</span><strong>{data.account?money(data.account.netWorth):'LINK TO OPEN'}</strong><small>In-game currency · no real-world value</small></div>
+      <div><WalletCards/><span>ATM BANK CASH</span><strong>{data.account?money(data.account.cash):'LOCKED'}</strong><small>{data.account?.bankSource==='ATM_BANK_MANAGER'?'Synced from the game server':'Join the game to sync'}</small></div>
       <div><Landmark/><span>INVESTED</span><strong>{data.account?money(data.account.holdingsValue):'LOCKED'}</strong></div>
       <div><Coins/><span>OPEN POSITIONS</span><strong>{data.holdings.length}</strong></div>
     </section>
