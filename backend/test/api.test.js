@@ -70,6 +70,36 @@ describe('Shadow RP CAD API', () => {
     }).expect(201);
     const dashboard = await agent.get('/api/cad/dashboard').expect(200);
     assert.ok(dashboard.body.calls.some(call => call.description === 'Vehicle collision'));
+    assert.ok(Array.isArray(dashboard.body.bolos));
+  });
+
+  it('runs the advanced incident command workflow', async () => {
+    const created = await agent.post('/api/cad/calls').send({
+      callTitle: 'Armed suspect perimeter', callerName: 'Dispatch', locationGrid: '051 061',
+      description: 'Units requested for containment and contact.', priority: 'P0', callType: 'WEAPONS'
+    }).expect(201);
+    assert.equal(created.body.priority, 'P0');
+    assert.equal(created.body.call_type, 'WEAPONS');
+    const assigned = await agent.patch(`/api/cad/calls/${created.body.id}`).send({
+      status: 'DISPATCHED', assignedUnits: ['1-L-12'], priority: 'P0'
+    }).expect(200);
+    assert.ok(assigned.body.events.some(event => event.event_type === 'UNIT_ASSIGNED'));
+    const noted = await agent.post(`/api/cad/calls/${created.body.id}/notes`).send({ note: 'Perimeter established on the east road.' }).expect(201);
+    assert.equal(noted.body.events[0].event_type, 'NOTE');
+    const unit = await agent.patch('/api/cad/units/demo-unit-1').send({ dutyStatus: '10-6' }).expect(200);
+    assert.equal(unit.body.duty_status, '10-6');
+  });
+
+  it('creates BOLO alerts and searches every records system', async () => {
+    const bolo = await agent.post('/api/cad/bolos').send({
+      boloType: 'PERSON', subject: 'Night', description: 'Wanted for interview', priority: 'P1', locationGrid: '044 064'
+    }).expect(201);
+    assert.equal(bolo.body.status, 'ACTIVE');
+    const search = await agent.get('/api/cad/global-search?q=Night').expect(200);
+    assert.ok(search.body.people.some(person => person.alias === 'Night'));
+    assert.ok(search.body.bolos.some(item => item.subject === 'Night'));
+    const located = await agent.patch(`/api/cad/bolos/${bolo.body.id}`).send({ status: 'LOCATED' }).expect(200);
+    assert.equal(located.body.status, 'LOCATED');
   });
 
   it('finds seeded people and vehicles', async () => {

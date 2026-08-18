@@ -1,6 +1,7 @@
 import { Activity, ChartCandlestick, FileText, IdCard, Landmark, LayoutDashboard, Link2, LogOut, Map, Search, Shield, ShieldCheck } from 'lucide-react';
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import MusicPlayer from './MusicPlayer.jsx';
+import CommandPalette from './CommandPalette.jsx';
 
 const links = [
   ['/', LayoutDashboard, 'Dispatch'], ['/lookup', Search, 'Records'], ['/map', Map, 'Live map'],
@@ -17,7 +18,7 @@ export default function Shell({ user, onLogout }) {
       <div className="sidebar-bottom"><div className="connection"><Activity size={14}/><span>Systems operational</span></div><button className="nav-button" onClick={onLogout}><LogOut size={18}/> Sign out</button></div>
     </aside>
     <div className="main-column">
-      <header className="topbar"><div><span className="eyebrow">SHADOW RP PUBLIC SAFETY</span><strong>Computer Aided Dispatch</strong></div><div className="user-chip"><Shield size={16}/><span>{user.discord_username}</span><b>{user.role}</b></div></header>
+      <header className="topbar"><div><span className="eyebrow">SHADOW RP PUBLIC SAFETY</span><strong>Computer Aided Dispatch</strong></div>{cadUser && <CommandPalette/>}<div className="user-chip"><Shield size={16}/><span>{user.discord_username}</span><b>{user.role}</b></div></header>
       {!user.reforger_uid&&<div className="global-link-banner"><Link2/><div><strong>Finish your one-time Shadow RP account link</strong><span>Secure your persistent bank, money, investments, property, and in-game identity.</span></div><Link to="/linking">Enter link code</Link></div>}
       <main className="content"><Outlet /></main>
     </div>

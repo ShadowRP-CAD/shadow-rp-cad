@@ -51,6 +51,27 @@ export function createDatabase(filename = config.databasePath) {
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS call_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      call_id INTEGER NOT NULL REFERENCES active_calls(id) ON DELETE CASCADE,
+      event_type TEXT NOT NULL,
+      message TEXT NOT NULL,
+      actor_name TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS bolos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      bolo_type TEXT NOT NULL CHECK(bolo_type IN ('PERSON','VEHICLE','PROPERTY','GENERAL')),
+      subject TEXT NOT NULL,
+      description TEXT NOT NULL,
+      priority TEXT NOT NULL DEFAULT 'P2' CHECK(priority IN ('P0','P1','P2','P3')),
+      status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK(status IN ('ACTIVE','LOCATED','EXPIRED','CANCELLED')),
+      location_grid TEXT,
+      created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      expires_at TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
     CREATE TABLE IF NOT EXISTS units (
       reforger_uid TEXT PRIMARY KEY,
       player_name TEXT NOT NULL,
@@ -182,6 +203,8 @@ export function createDatabase(filename = config.databasePath) {
     );
     CREATE INDEX IF NOT EXISTS idx_characters_name ON characters(last_name, first_name);
     CREATE INDEX IF NOT EXISTS idx_calls_status ON active_calls(status, created_at);
+    CREATE INDEX IF NOT EXISTS idx_call_events_call_time ON call_events(call_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_bolos_status_priority ON bolos(status, priority, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_units_updated ON units(updated_at);
     CREATE INDEX IF NOT EXISTS idx_tokens_expiry ON link_tokens(expires_at);
     CREATE INDEX IF NOT EXISTS idx_market_prices_symbol_time ON market_prices(symbol, recorded_at DESC);
@@ -195,6 +218,10 @@ export function createDatabase(filename = config.databasePath) {
   const characterColumns = db.prepare('PRAGMA table_info(characters)').all();
   if (!characterColumns.some(column => column.name === 'alias')) db.exec('ALTER TABLE characters ADD COLUMN alias TEXT');
   db.exec(`UPDATE characters SET alias = trim(first_name || ' ' || last_name) WHERE alias IS NULL OR trim(alias) = ''`);
+  const callColumns = db.prepare('PRAGMA table_info(active_calls)').all();
+  if (!callColumns.some(column => column.name === 'priority')) db.exec(`ALTER TABLE active_calls ADD COLUMN priority TEXT NOT NULL DEFAULT 'P2'`);
+  if (!callColumns.some(column => column.name === 'call_type')) db.exec(`ALTER TABLE active_calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'GENERAL'`);
+  if (!callColumns.some(column => column.name === 'disposition')) db.exec(`ALTER TABLE active_calls ADD COLUMN disposition TEXT`);
   return db;
 }
 
@@ -209,6 +236,8 @@ export function seedDatabase(db, { demo = true } = {}) {
       .run('SRP-104', 'M1025 Utility Vehicle', c1.lastInsertRowid, 0, 'Midnight Black');
     db.prepare(`INSERT INTO active_calls (call_title, caller_name, location_grid, world_x, world_z, description) VALUES (?, ?, ?, ?, ?, ?)`)
       .run('Suspicious vehicle', 'Anonymous', '042 067', 4200, 6700, 'Dark vehicle circling the fuel station.');
+    db.prepare(`INSERT INTO bolos (bolo_type,subject,description,priority,location_grid,created_by) VALUES (?,?,?,?,?,?)`)
+      .run('VEHICLE', 'Black off-road vehicle · Partial plate SRP', 'Wanted for questioning in connection with repeated fuel station surveillance.', 'P1', '042 067', user.lastInsertRowid);
     db.prepare(`INSERT INTO units (reforger_uid, player_name, callsign, agency, rank, duty_status, world_x, world_z, location_grid) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
       .run('demo-unit-1', 'Wraith', '1-L-12', 'LEO', 'Deputy', '10-8', 3900, 6400, '039 064');
   }

@@ -5,6 +5,8 @@ import { requireAuth, requireInternal, requireRole } from './auth.js';
 const parseJson = value => { try { return JSON.parse(value || '[]'); } catch { return []; } };
 const cleanString = (value, max = 500) => String(value ?? '').trim().slice(0, max);
 const cadRoles = ['LEO', 'EMS', 'DISPATCH', 'ADMIN'];
+const priorities = ['P0', 'P1', 'P2', 'P3'];
+const dutyStatuses = ['10-8', '10-7', '10-6', '10-23', '10-99'];
 
 function requireLinked(req, res, next) {
   if (!req.user?.reforger_uid) return res.status(409).json({ error: 'Complete the one-time in-game account link to use persistent economy services.', code: 'ACCOUNT_LINK_REQUIRED' });
@@ -22,6 +24,18 @@ function rowToCharacter(row) {
 
 function rowToCall(row) {
   return row && { ...row, assigned_units: parseJson(row.assigned_units) };
+}
+
+function callWithEvents(db, row) {
+  const call = rowToCall(row);
+  if (!call) return call;
+  call.events = db.prepare('SELECT * FROM call_events WHERE call_id=? ORDER BY id DESC LIMIT 30').all(call.id);
+  return call;
+}
+
+function addCallEvent(db, callId, eventType, message, actorName = 'Game Server') {
+  db.prepare('INSERT INTO call_events (call_id,event_type,message,actor_name) VALUES (?,?,?,?)')
+    .run(callId, eventType, cleanString(message, 800), cleanString(actorName, 80) || 'System');
 }
 
 function ensureEconomyAccount(db, userId, openingBalance = 25000, memo = 'Shadow Bank resident account opened') {
@@ -196,9 +210,29 @@ export function createApiRouter(db, events) {
     const grid = cleanString(req.body.locationGrid, 32);
     const description = cleanString(req.body.description, 1000);
     if (!caller || !grid || !description) return res.status(400).json({ error: 'callerName, locationGrid, and description are required' });
-    const result = db.prepare(`INSERT INTO active_calls (call_title, caller_name, location_grid, world_x, world_z, description)
-      VALUES (?, ?, ?, ?, ?, ?)`).run(title, caller, grid, Number(req.body.worldX) || null, Number(req.body.worldZ) || null, description);
-    const call = rowToCall(db.prepare('SELECT * FROM active_calls WHERE id = ?').get(result.lastInsertRowid));
+    const priority = priorities.includes(cleanString(req.body.priority, 2).toUpperCase()) ? cleanString(req.body.priority, 2).toUpperCase() : 'P1';
+    const callType = cleanString(req.body.callType || '911', 32).toUpperCase();
+    const result = db.prepare(`INSERT INTO active_calls (call_title, caller_name, location_grid, world_x, world_z, description, priority, call_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(title, caller, grid, Number(req.body.worldX) || null, Number(req.body.worldZ) || null, description, priority, callType);
+    addCallEvent(db, result.lastInsertRowid, 'CREATED', `Emergency call received from ${caller}`, 'Game Server');
+    const call = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id = ?').get(result.lastInsertRowid));
+    events.broadcast('call.created', call);
+    res.status(201).json(call);
+  });
+
+  router.post('/cad/calls', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const title = cleanString(req.body.callTitle, 100);
+    const caller = cleanString(req.body.callerName || 'Dispatch initiated', 80);
+    const grid = cleanString(req.body.locationGrid, 32);
+    const description = cleanString(req.body.description, 1000);
+    const priority = priorities.includes(cleanString(req.body.priority, 2).toUpperCase()) ? cleanString(req.body.priority, 2).toUpperCase() : 'P2';
+    const callType = cleanString(req.body.callType || 'GENERAL', 32).toUpperCase();
+    if (!title || !grid || !description) return res.status(400).json({ error: 'Title, location grid, and description are required' });
+    const result = db.prepare(`INSERT INTO active_calls (call_title,caller_name,location_grid,description,priority,call_type)
+      VALUES (?,?,?,?,?,?)`).run(title, caller, grid, description, priority, callType);
+    addCallEvent(db, result.lastInsertRowid, 'CREATED', `${priority} ${callType} incident created`, req.user.discord_username);
+    const call = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id=?').get(result.lastInsertRowid));
+    audit(db, req, 'CALL_CREATED', 'CALL', call.id, { priority, callType, grid });
     events.broadcast('call.created', call);
     res.status(201).json(call);
   });
@@ -221,21 +255,99 @@ export function createApiRouter(db, events) {
   });
 
   router.get('/cad/dashboard', requireAuth, requireRole(...cadRoles), (_req, res) => {
-    const calls = db.prepare(`SELECT * FROM active_calls WHERE status != 'CLOSED' ORDER BY created_at DESC`).all().map(rowToCall);
+    const calls = db.prepare(`SELECT * FROM active_calls WHERE status != 'CLOSED'
+      ORDER BY CASE priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END, created_at DESC`).all().map(row => callWithEvents(db, row));
     const units = db.prepare(`SELECT * FROM units WHERE datetime(updated_at) > datetime('now', '-30 minutes') ORDER BY callsign`).all();
-    res.json({ calls, units });
+    db.prepare(`UPDATE bolos SET status='EXPIRED',updated_at=CURRENT_TIMESTAMP WHERE status='ACTIVE' AND expires_at IS NOT NULL AND datetime(expires_at)<=datetime('now')`).run();
+    const bolos = db.prepare(`SELECT b.*,u.discord_username AS created_by_name FROM bolos b LEFT JOIN users u ON u.id=b.created_by
+      WHERE b.status='ACTIVE' ORDER BY CASE b.priority WHEN 'P0' THEN 0 WHEN 'P1' THEN 1 WHEN 'P2' THEN 2 ELSE 3 END,b.created_at DESC LIMIT 50`).all();
+    res.json({ calls, units, bolos, serverTime: new Date().toISOString() });
   });
 
   router.patch('/cad/calls/:id', requireAuth, requireRole(...cadRoles), (req, res) => {
     const current = db.prepare('SELECT * FROM active_calls WHERE id = ?').get(req.params.id);
     if (!current) return res.status(404).json({ error: 'Call not found' });
     const status = req.body.status && ['OPEN','DISPATCHED','CLOSED'].includes(req.body.status) ? req.body.status : current.status;
+    const priority = priorities.includes(req.body.priority) ? req.body.priority : current.priority;
+    const callType = cleanString(req.body.callType || current.call_type, 32).toUpperCase();
+    const disposition = req.body.disposition == null ? current.disposition : cleanString(req.body.disposition, 120);
     const assigned = Array.isArray(req.body.assignedUnits) ? req.body.assignedUnits.map(v => cleanString(v, 24)).slice(0, 12) : parseJson(current.assigned_units);
-    db.prepare('UPDATE active_calls SET status = ?, assigned_units = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, JSON.stringify(assigned), current.id);
-    const call = rowToCall(db.prepare('SELECT * FROM active_calls WHERE id = ?').get(current.id));
-    audit(db, req, 'CALL_UPDATED', 'CALL', current.id, { status, assignedUnits: assigned });
+    db.prepare('UPDATE active_calls SET status=?,assigned_units=?,priority=?,call_type=?,disposition=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+      .run(status, JSON.stringify(assigned), priority, callType, disposition || null, current.id);
+    if (status !== current.status) addCallEvent(db, current.id, 'STATUS', `Status changed from ${current.status} to ${status}`, req.user.discord_username);
+    if (priority !== current.priority) addCallEvent(db, current.id, 'PRIORITY', `Priority changed from ${current.priority} to ${priority}`, req.user.discord_username);
+    const previousAssigned = parseJson(current.assigned_units);
+    for (const callsign of assigned.filter(value => !previousAssigned.includes(value))) addCallEvent(db, current.id, 'UNIT_ASSIGNED', `${callsign} assigned to incident`, req.user.discord_username);
+    const call = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id = ?').get(current.id));
+    audit(db, req, 'CALL_UPDATED', 'CALL', current.id, { status, priority, assignedUnits: assigned });
     events.broadcast('call.updated', call);
     res.json(call);
+  });
+
+  router.post('/cad/calls/:id/notes', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const call = db.prepare('SELECT * FROM active_calls WHERE id=?').get(req.params.id);
+    if (!call) return res.status(404).json({ error: 'Call not found' });
+    const note = cleanString(req.body.note, 800);
+    if (!note) return res.status(400).json({ error: 'A note is required' });
+    addCallEvent(db, call.id, 'NOTE', note, req.user.discord_username);
+    const updated = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id=?').get(call.id));
+    audit(db, req, 'CALL_NOTE_ADDED', 'CALL', call.id, { note });
+    events.broadcast('call.updated', updated);
+    res.status(201).json(updated);
+  });
+
+  router.patch('/cad/units/:uid', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const unit = db.prepare('SELECT * FROM units WHERE reforger_uid=?').get(req.params.uid);
+    if (!unit) return res.status(404).json({ error: 'Unit not found' });
+    const dutyStatus = dutyStatuses.includes(cleanString(req.body.dutyStatus, 16).toUpperCase()) ? cleanString(req.body.dutyStatus, 16).toUpperCase() : unit.duty_status;
+    const callsign = cleanString(req.body.callsign || unit.callsign, 24);
+    db.prepare('UPDATE units SET duty_status=?,callsign=?,updated_at=CURRENT_TIMESTAMP WHERE reforger_uid=?').run(dutyStatus, callsign, unit.reforger_uid);
+    const updated = db.prepare('SELECT * FROM units WHERE reforger_uid=?').get(unit.reforger_uid);
+    audit(db, req, 'UNIT_STATUS_CHANGED', 'UNIT', unit.reforger_uid, { callsign, dutyStatus });
+    events.broadcast('unit.updated', updated);
+    res.json(updated);
+  });
+
+  router.post('/cad/bolos', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const type = cleanString(req.body.boloType, 16).toUpperCase();
+    const subject = cleanString(req.body.subject, 120);
+    const description = cleanString(req.body.description, 1000);
+    const priority = priorities.includes(cleanString(req.body.priority, 2).toUpperCase()) ? cleanString(req.body.priority, 2).toUpperCase() : 'P2';
+    const grid = cleanString(req.body.locationGrid, 32) || null;
+    const expiresAt = req.body.expiresAt && !Number.isNaN(Date.parse(req.body.expiresAt)) ? new Date(req.body.expiresAt).toISOString() : null;
+    if (!['PERSON','VEHICLE','PROPERTY','GENERAL'].includes(type) || !subject || !description) return res.status(400).json({ error: 'Valid BOLO type, subject, and description are required' });
+    const result = db.prepare(`INSERT INTO bolos (bolo_type,subject,description,priority,location_grid,created_by,expires_at) VALUES (?,?,?,?,?,?,?)`)
+      .run(type, subject, description, priority, grid, req.user.id, expiresAt);
+    const bolo = db.prepare(`SELECT b.*,u.discord_username AS created_by_name FROM bolos b LEFT JOIN users u ON u.id=b.created_by WHERE b.id=?`).get(result.lastInsertRowid);
+    audit(db, req, 'BOLO_CREATED', 'BOLO', bolo.id, { type, subject, priority });
+    events.broadcast('bolo.created', bolo);
+    res.status(201).json(bolo);
+  });
+
+  router.patch('/cad/bolos/:id', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const current = db.prepare('SELECT * FROM bolos WHERE id=?').get(req.params.id);
+    if (!current) return res.status(404).json({ error: 'BOLO not found' });
+    const status = ['ACTIVE','LOCATED','EXPIRED','CANCELLED'].includes(req.body.status) ? req.body.status : current.status;
+    const priority = priorities.includes(req.body.priority) ? req.body.priority : current.priority;
+    db.prepare('UPDATE bolos SET status=?,priority=?,updated_at=CURRENT_TIMESTAMP WHERE id=?').run(status, priority, current.id);
+    const bolo = db.prepare(`SELECT b.*,u.discord_username AS created_by_name FROM bolos b LEFT JOIN users u ON u.id=b.created_by WHERE b.id=?`).get(current.id);
+    audit(db, req, 'BOLO_UPDATED', 'BOLO', current.id, { status, priority });
+    events.broadcast('bolo.updated', bolo);
+    res.json(bolo);
+  });
+
+  router.get('/cad/global-search', requireAuth, requireRole(...cadRoles), (req, res) => {
+    const query = cleanString(req.query.q, 80);
+    if (query.length < 2) return res.json({ people: [], vehicles: [], reports: [], bolos: [] });
+    const term = `%${query}%`;
+    const people = db.prepare(`SELECT c.id,c.alias,c.dob,c.driver_license,c.firearm_license,c.warrants,c.priors FROM characters c
+      WHERE c.alias LIKE ? OR c.first_name||' '||c.last_name LIKE ? ORDER BY c.alias LIMIT 8`).all(term, term).map(rowToCharacter);
+    const vehicles = db.prepare(`SELECT v.id,v.plate,v.model,v.color,v.is_stolen,COALESCE(c.alias,trim(c.first_name||' '||c.last_name)) owner_name
+      FROM vehicles v JOIN characters c ON c.id=v.owner_id WHERE v.plate LIKE ? OR v.model LIKE ? ORDER BY v.plate LIMIT 8`).all(term, term).map(row => ({ ...row, is_stolen: Boolean(row.is_stolen) }));
+    const reports = db.prepare(`SELECT r.id,r.report_type,r.title,r.created_at,u.discord_username FROM reports r JOIN users u ON u.id=r.author_user_id
+      WHERE r.title LIKE ? OR r.narrative LIKE ? ORDER BY r.id DESC LIMIT 8`).all(term, term);
+    const bolos = db.prepare(`SELECT * FROM bolos WHERE subject LIKE ? OR description LIKE ? ORDER BY id DESC LIMIT 8`).all(term, term);
+    res.json({ people, vehicles, reports, bolos });
   });
 
   router.get('/cad/civilian/lookup', requireAuth, requireRole(...cadRoles), (req, res) => {
