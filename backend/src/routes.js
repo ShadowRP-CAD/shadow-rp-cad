@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import express from 'express';
 import { requireAuth, requireInternal, requireRole } from './auth.js';
+import { getPublicSunoTracks } from './suno.js';
 
 const parseJson = value => { try { return JSON.parse(value || '[]'); } catch { return []; } };
 const cleanString = (value, max = 500) => String(value ?? '').trim().slice(0, max);
@@ -105,6 +106,16 @@ export function createApiRouter(db, events) {
   const router = express.Router();
 
   router.get('/health', (_req, res) => res.json({ ok: true, service: 'shadow-rp-cad', time: new Date().toISOString() }));
+  router.get('/music/tracks', async (_req, res) => {
+    try {
+      const tracks = await getPublicSunoTracks();
+      res.set('Cache-Control', 'public, max-age=900, stale-while-revalidate=3600');
+      res.json({ profile: 'https://suno.com/@playerv2', tracks });
+    } catch (error) {
+      console.warn('[Shadow Radio] Public Suno profile unavailable:', error.message);
+      res.status(503).json({ error: 'The live Shadow Radio catalog is temporarily unavailable.' });
+    }
+  });
   router.get('/me', requireAuth, (req, res) => res.json({ user: req.user }));
 
   router.post('/link/generate', requireInternal, (req, res) => {

@@ -11,6 +11,7 @@ import LiveMap from './pages/LiveMap.jsx';
 import Market from './pages/Market.jsx';
 import Personas from './pages/Personas.jsx';
 import Reports from './pages/Reports.jsx';
+import VisualEffects from './components/VisualEffects.jsx';
 
 function Login() {
   return <main className="login-shell">
@@ -29,10 +30,10 @@ function Login() {
 export default function App() {
   const [state, setState] = useState({ loading: true, user: null });
   useEffect(() => { api('/me').then(({ user }) => setState({ loading: false, user })).catch(() => setState({ loading: false, user: null })); }, []);
-  if (state.loading) return <div className="boot"><div className="brand-mark">SR</div><span>Opening secure terminal…</span></div>;
-  if (!state.user) return <Login />;
+  if (state.loading) return <><VisualEffects/><div className="boot"><div className="brand-mark">SR</div><span>Opening secure terminal…</span></div></>;
+  if (!state.user) return <><VisualEffects/><Login /></>;
   const cadUser = ['LEO','EMS','DISPATCH','ADMIN'].includes(state.user.role);
-  return <HashRouter><Routes>
+  return <><VisualEffects/><HashRouter><Routes>
     <Route element={<Shell user={state.user} onLogout={() => fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).finally(() => location.reload())} />}>
       <Route index element={cadUser ? <Dashboard /> : <CivilianHub />} />
       <Route path="civilian" element={<CivilianHub />} />
@@ -45,5 +46,5 @@ export default function App() {
       <Route path="reports" element={cadUser ? <Reports /> : <Navigate to="/personas" replace />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Route>
-  </Routes></HashRouter>;
+  </Routes></HashRouter></>;
 }

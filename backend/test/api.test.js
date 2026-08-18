@@ -9,6 +9,7 @@ process.env.SESSION_SECRET = 'test-secret-that-is-long-enough-for-tests';
 
 const { createDatabase, seedDatabase } = await import('../src/db.js');
 const { createApp } = await import('../src/app.js');
+const { normalizeSunoClips } = await import('../src/suno.js');
 
 describe('Shadow RP CAD API', () => {
   let db, app, agent;
@@ -71,6 +72,17 @@ describe('Shadow RP CAD API', () => {
     const dashboard = await agent.get('/api/cad/dashboard').expect(200);
     assert.ok(dashboard.body.calls.some(call => call.description === 'Vehicle collision'));
     assert.ok(Array.isArray(dashboard.body.bolos));
+  });
+
+  it('normalizes and protects the public Shadow Radio catalog', () => {
+    const tracks = normalizeSunoClips([
+      { id: 'track-1', title: 'Shadow Anthem', audio_url: 'https://cdn1.suno.ai/track-1.mp3', display_name: 'Playa' },
+      { id: 'track-1', title: 'Duplicate', audio_url: 'https://cdn1.suno.ai/track-1.mp3' },
+      { id: 'unsafe', title: 'Unsafe', audio_url: 'javascript:alert(1)' }
+    ]);
+    assert.equal(tracks.length, 1);
+    assert.equal(tracks[0].title, 'Shadow Anthem');
+    assert.equal(tracks[0].page, 'https://suno.com/song/track-1');
   });
 
   it('runs the advanced incident command workflow', async () => {
