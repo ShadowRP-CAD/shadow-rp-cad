@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
-import { api, API_URL } from './api.js';
+import { api, API_URL, authHeaders, clearWebAuthToken } from './api.js';
 import Shell from './components/Shell.jsx';
 import Admin from './pages/Admin.jsx';
 import CivilianHub from './pages/CivilianHub.jsx';
@@ -34,7 +34,9 @@ export default function App() {
   if (!state.user) return <><VisualEffects/><Login /></>;
   const cadUser = ['LEO','EMS','DISPATCH','ADMIN'].includes(state.user.role);
   return <><VisualEffects/><HashRouter><Routes>
-    <Route element={<Shell user={state.user} onLogout={() => fetch(`${API_URL}/auth/logout`, { method: 'POST', credentials: 'include' }).finally(() => location.reload())} />}>
+    <Route element={<Shell user={state.user} onLogout={() => fetch(`${API_URL}/auth/logout`, {
+      method: 'POST', credentials: 'include', headers: authHeaders()
+    }).finally(() => { clearWebAuthToken(); location.reload(); })} />}>
       <Route index element={cadUser ? <Dashboard /> : <CivilianHub />} />
       <Route path="civilian" element={<CivilianHub />} />
       <Route path="lookup" element={<Lookup />} />
