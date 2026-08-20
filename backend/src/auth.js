@@ -70,7 +70,14 @@ export function registerAuthRoutes(app, db) {
         redirect_uri: config.discordCallbackUrl
       })
     });
-    if (!tokenResponse.ok) throw new Error(`Discord token exchange failed (${tokenResponse.status})`);
+    if (!tokenResponse.ok) {
+      const details = await tokenResponse.json().catch(() => ({}));
+      const error = new Error(`Discord token exchange failed (${tokenResponse.status})`);
+      error.status = tokenResponse.status;
+      error.oauthCode = typeof details.error === 'string' ? details.error : 'unknown';
+      error.oauthDescription = typeof details.error_description === 'string' ? details.error_description : '';
+      throw error;
+    }
     const token = await tokenResponse.json();
     const profileResponse = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token.access_token}` } });
     if (!profileResponse.ok) throw new Error(`Discord profile request failed (${profileResponse.status})`);
@@ -93,6 +100,7 @@ export function registerAuthRoutes(app, db) {
 
   app.get('/auth/discord', (req, res) => {
     if (!config.discordClientId) return res.status(503).send('Discord OAuth is not configured.');
+    if (req.query.retry !== '1') req.session.oauthRetryCount = 0;
     const state = crypto.randomBytes(24).toString('hex');
     req.session.oauthState = state;
     const query = new URLSearchParams({
@@ -107,6 +115,9 @@ export function registerAuthRoutes(app, db) {
 
   app.get('/auth/discord/callback', async (req, res, next) => {
     try {
+      // A mobile browser may revisit an old callback after the first request
+      // already created the session. Never redeem the one-time code again.
+      if (req.session.userId) return res.redirect(config.frontendUrl);
       const code = req.query.code ? String(req.query.code) : '';
       let exchange = code ? oauthExchanges.get(code) : null;
       if (!exchange) {
@@ -118,7 +129,26 @@ export function registerAuthRoutes(app, db) {
           if (oauthExchanges.get(code) === exchange) oauthExchanges.delete(code);
         }, 120_000).unref?.();
       }
-      req.session.userId = await exchange;
+      try {
+        req.session.userId = await exchange;
+      } catch (error) {
+        console.warn('[Discord OAuth] token exchange rejected', {
+          status: error.status || 0,
+          oauthCode: error.oauthCode || 'unknown',
+          description: error.oauthDescription || '',
+          retryCount: req.session.oauthRetryCount || 0
+        });
+        // Discord authorization codes are single-use and mobile embedded
+        // browsers sometimes restore a consumed callback. Generate one fresh
+        // code automatically, but cap recovery at one attempt to avoid loops.
+        if (error.status === 400 && (req.session.oauthRetryCount || 0) < 1) {
+          req.session.oauthRetryCount = 1;
+          await saveSession(req);
+          return res.redirect('/auth/discord?retry=1');
+        }
+        throw error;
+      }
+      delete req.session.oauthRetryCount;
       await saveSession(req);
       res.redirect(config.frontendUrl);
     } catch (error) { next(error); }
