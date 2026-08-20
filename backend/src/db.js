@@ -59,6 +59,13 @@ export function createDatabase(filename = config.databasePath) {
       actor_name TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
+    CREATE TABLE IF NOT EXISTS web_auth_tokens (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      last_used_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS bolos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       bolo_type TEXT NOT NULL CHECK(bolo_type IN ('PERSON','VEHICLE','PROPERTY','GENERAL')),
@@ -214,6 +221,7 @@ export function createDatabase(filename = config.databasePath) {
     CREATE INDEX IF NOT EXISTS idx_civilian_requests_user_time ON civilian_requests(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_time ON audit_logs(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_web_auth_tokens_expiry ON web_auth_tokens(expires_at);
   `);
   const characterColumns = db.prepare('PRAGMA table_info(characters)').all();
   if (!characterColumns.some(column => column.name === 'alias')) db.exec('ALTER TABLE characters ADD COLUMN alias TEXT');
