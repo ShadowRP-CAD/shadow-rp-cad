@@ -74,7 +74,8 @@ class SRP_AccountLinkComponent : ScriptComponent
 
 		SRP_CADEmergencyRequest payload = new SRP_CADEmergencyRequest();
 		payload.callTitle = "In-game emergency call";
-		payload.callerName = playerManager.GetPlayerName(playerId);
+		payload.callerName = "RPPhone caller";
+		payload.reforgerUid = SCR_PlayerIdentityUtils.GetPlayerIdentityId(player);
 		payload.locationGrid = SCR_MapEntity.GetGridLabel(position);
 		payload.description = description;
 		payload.serviceType = serviceType;
@@ -100,3 +101,4 @@ class SRP_AccountLinkComponent : ScriptComponent
 		SCR_HintManagerComponent.ShowCustomHint(dispatchText, "AI DISPATCH RADIO · " + priority + " · " + tenCode, 18);
 	}
 }
+
