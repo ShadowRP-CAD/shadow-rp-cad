@@ -2,8 +2,24 @@ import crypto from 'node:crypto';
 import { config } from './config.js';
 
 export function requireAuth(req, res, next) {
-  if (!req.session.userId) return res.status(401).json({ error: 'Authentication required' });
+  if (!req.user) return res.status(401).json({ error: 'Authentication required' });
   next();
+}
+
+export function hashWebToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+export function bearerTokenFromRequest(req) {
+  const match = String(req.get?.('authorization') || '').match(/^Bearer\s+([A-Za-z0-9_-]{32,})$/i);
+  return match ? match[1] : '';
+}
+
+export function resolveWebTokenUser(db, token) {
+  if (!token) return null;
+  return db.prepare(`SELECT u.id,u.discord_id,u.discord_username,u.steam_id,u.reforger_uid,u.role,u.created_at
+    FROM web_auth_tokens t JOIN users u ON u.id=t.user_id
+    WHERE t.token_hash=? AND datetime(t.expires_at)>datetime('now')`).get(hashWebToken(token)) || null;
 }
 
 export function requireRole(...roles) {
@@ -38,8 +54,17 @@ export function requireInternal(req, res, next) {
 
 export function attachUser(db) {
   const statement = db.prepare('SELECT id, discord_id, discord_username, steam_id, reforger_uid, role, created_at FROM users WHERE id = ?');
+  const touchToken = db.prepare('UPDATE web_auth_tokens SET last_used_at=CURRENT_TIMESTAMP WHERE token_hash=?');
   return (req, _res, next) => {
     req.user = req.session.userId ? statement.get(req.session.userId) : null;
+    if (!req.user) {
+      const bearer = bearerTokenFromRequest(req);
+      req.user = resolveWebTokenUser(db, bearer);
+      if (req.user) {
+        req.webAuthTokenHash = hashWebToken(bearer);
+        touchToken.run(req.webAuthTokenHash);
+      }
+    }
     if (req.user && req.user.discord_id !== 'demo-dispatch' && req.user.role === 'CIVILIAN') {
       const privilegedUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch' AND role IN ('LEO','EMS','DISPATCH','ADMIN')`).get().count;
       const realUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch'`).get().count;
@@ -98,6 +123,15 @@ export function registerAuthRoutes(app, db) {
     return new Promise((resolve, reject) => req.session.save(error => error ? reject(error) : resolve()));
   }
 
+  function frontendLoginRedirect(userId) {
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(`INSERT INTO web_auth_tokens (token_hash,user_id,expires_at) VALUES (?,?,?)`)
+      .run(hashWebToken(token), userId, expiresAt);
+    const base = config.frontendUrl.replace(/#.*$/, '');
+    return `${base}#auth_token=${encodeURIComponent(token)}`;
+  }
+
   app.get('/auth/discord', (req, res) => {
     if (!config.discordClientId) return res.status(503).send('Discord OAuth is not configured.');
     if (req.query.retry !== '1') req.session.oauthRetryCount = 0;
@@ -117,7 +151,7 @@ export function registerAuthRoutes(app, db) {
     try {
       // A mobile browser may revisit an old callback after the first request
       // already created the session. Never redeem the one-time code again.
-      if (req.session.userId) return res.redirect(config.frontendUrl);
+      if (req.session.userId) return res.redirect(frontendLoginRedirect(req.session.userId));
       const code = req.query.code ? String(req.query.code) : '';
       let exchange = code ? oauthExchanges.get(code) : null;
       if (!exchange) {
@@ -150,7 +184,7 @@ export function registerAuthRoutes(app, db) {
       }
       delete req.session.oauthRetryCount;
       await saveSession(req);
-      res.redirect(config.frontendUrl);
+      res.redirect(frontendLoginRedirect(req.session.userId));
     } catch (error) { next(error); }
   });
 
@@ -165,6 +199,7 @@ export function registerAuthRoutes(app, db) {
   app.post('/auth/logout', (req, res, next) => {
     if (req.user) db.prepare(`INSERT INTO audit_logs (user_id,actor_name,action,entity_type,entity_id,details,ip_address) VALUES (?,?,?,?,?,?,?)`)
       .run(req.user.id, req.user.discord_username, 'AUTH_LOGOUT', 'SESSION', String(req.user.id), '{}', req.ip);
+    if (req.webAuthTokenHash) db.prepare('DELETE FROM web_auth_tokens WHERE token_hash=?').run(req.webAuthTokenHash);
     req.session.destroy(error => error ? next(error) : res.status(204).end());
   });
 }
