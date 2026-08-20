@@ -2,15 +2,17 @@
 
 This source addon is configured for the live Shadow RP backend and uses project GUID `A4C19E7B53D02461`.
 
-## Existing combined Shadow RP server source
+## Existing combined Shadow RP v117 server source
 
-For the server project that already contains the configured CAD/ATM bridge, install only the non-destructive AI extension. From this folder run:
+For the v117 server project that already contains the configured CAD/ATM bridge, install only the non-destructive AI extension. Publish **Shadow RP Everon Housing v1.1.7** first, as required by the supplied v117 release notes. Then, from this folder, run:
 
 ```powershell
 .\Install-IntoShadowRPServer.ps1 -ServerSource "C:\Users\Dev\Desktop\Server Mods\ShadowRP-v115-NO-UNCON-SERVER-AND-HOUSING\Server-Source"
 ```
 
-This copies one new file, `SRP_AIDispatchServerIntegration.c`, and does not replace the configured API key, ATM sync, onboarding, or any existing CAD script. Open that server project in Workbench and compile before publishing.
+The installer verifies the Shadow RP project GUID plus the RPPhone, Police/EMS, Housing, persistent Bank2, and existing CAD prerequisites. It copies the integration as `SRP_ZZ_AIDispatchServerIntegration.c` so the base CAD classes compile first, backs up an older copy if present, and does not replace the configured API key, ATM sync, onboarding, housing, world, player-controller prefab, or branding assets. Open that server project in Workbench and compile before publishing.
+
+The v117 bridge uses the persistent Bohemia identity for account and Bank2 synchronization, but sends the active RPPhone/CAD roleplay alias to dispatch. For linked callers, the backend resolves the CAD persona again and never displays the submitted platform name on the incident.
 
 The remaining instructions below apply when publishing the CAD bridge as its own standalone Workshop addon.
 
@@ -65,3 +67,4 @@ Use the exact Workshop mod ID shown by Workbench if it differs. Players automati
 ## Security
 
 Never commit the real `INTERNAL_API_KEY`. Reforger addon packages are inspectable, so keep internal routes narrowly scoped and rotate the key if exposed. For stronger protection, restrict the backend by game-server IP at a proxy.
+
