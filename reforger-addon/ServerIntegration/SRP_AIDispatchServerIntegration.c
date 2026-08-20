@@ -19,6 +19,54 @@ class SRP_AIDispatchResponse : JsonApiStruct
 	}
 }
 
+// Dedicated v117 request shape. This leaves the installed CAD bridge classes
+// untouched while adding the permanent identity and RPPhone service type.
+class SRP_AIEmergencyRequest : JsonApiStruct
+{
+	string apiKey;
+	string callTitle;
+	string callerName;
+	string reforgerUid;
+	string locationGrid;
+	string description;
+	string serviceType;
+	float worldX;
+	float worldZ;
+
+	void SRP_AIEmergencyRequest()
+	{
+		RegV("apiKey"); RegV("callTitle"); RegV("callerName"); RegV("reforgerUid");
+		RegV("locationGrid"); RegV("description"); RegV("serviceType");
+		RegV("worldX"); RegV("worldZ");
+	}
+}
+
+modded class JOB_jobComponent
+{
+	string SRP_CADGetRoleplayName()
+	{
+		return rpName;
+	}
+}
+
+class SRP_CADIdentityBridge
+{
+	static string GetRoleplayAlias(IEntity player, int playerId)
+	{
+		if (player)
+		{
+			JOB_jobComponent job = JOB_jobComponent.Cast(player.FindComponent(JOB_jobComponent));
+			if (job)
+			{
+				string roleplayName = job.SRP_CADGetRoleplayName();
+				if (!roleplayName.IsEmpty())
+					return roleplayName;
+			}
+		}
+		return string.Format("RP Caller %1", playerId);
+	}
+}
+
 modded class SRP_CADRestCallback
 {
 	override protected void Callback_OnSuccess(RestCallback callback)
@@ -36,6 +84,13 @@ modded class SRP_CADRestCallback
 
 modded class SRP_CADNetworkManager
 {
+	void SRP_AISendEmergencyCall(SRP_AIEmergencyRequest payload)
+	{
+		payload.apiKey = m_InternalApiKey;
+		payload.Pack();
+		Post("api/cad/call911", payload.AsString(), "call.911");
+	}
+
 	void SRP_AIBroadcastDispatch(SRP_AIDispatchResponse dispatch)
 	{
 		if (!Replication.IsServer() || !GetGame())
@@ -71,11 +126,17 @@ modded class SRP_CADNetworkManager
 		vector position = player.GetOrigin();
 		SRP_CADUnitStatusRequest payload = new SRP_CADUnitStatusRequest();
 		payload.reforgerUid = SCR_PlayerIdentityUtils.GetPlayerIdentityId(player);
-		payload.playerName = players.GetPlayerName(playerId);
+		payload.playerName = SRP_CADIdentityBridge.GetRoleplayAlias(player, playerId);
 		payload.callsign = callsign;
 		payload.agency = agency;
-		payload.rank = agency == "EMS" ? "Medic" : "Officer";
-		payload.dutyStatus = onDuty ? "10-8" : "10-7";
+		if (agency == "EMS")
+			payload.rank = "Medic";
+		else
+			payload.rank = "Officer";
+		if (onDuty)
+			payload.dutyStatus = "10-8";
+		else
+			payload.dutyStatus = "10-7";
 		payload.locationGrid = SCR_MapEntity.GetGridLabel(position);
 		payload.worldX = position[0];
 		payload.worldZ = position[2];
@@ -171,15 +232,22 @@ modded class PHN_CellComponent
 		int playerId = players.GetPlayerIdFromControlledEntity(player);
 		vector position = player.GetOrigin();
 		if (details.IsEmpty())
-			details = serviceType == "MEDICAL" ? "Medical assistance requested through RPPhone." : "Police assistance requested through RPPhone.";
-		SRP_CADEmergencyRequest payload = new SRP_CADEmergencyRequest();
+		{
+			if (serviceType == "MEDICAL")
+				details = "Medical assistance requested through RPPhone.";
+			else
+				details = "Police assistance requested through RPPhone.";
+		}
+		SRP_AIEmergencyRequest payload = new SRP_AIEmergencyRequest();
 		payload.callTitle = serviceType + " RPPhone emergency";
-		payload.callerName = players.GetPlayerName(playerId);
+		payload.callerName = SRP_CADIdentityBridge.GetRoleplayAlias(player, playerId);
+		payload.reforgerUid = SCR_PlayerIdentityUtils.GetPlayerIdentityId(player);
 		payload.locationGrid = SCR_MapEntity.GetGridLabel(position);
 		payload.description = serviceType + ": " + details;
+		payload.serviceType = serviceType;
 		payload.worldX = position[0]; payload.worldZ = position[2];
 		SRP_CADNetworkManager network = SRP_CADNetworkManager.GetInstance();
-		if (network) network.SendEmergencyCall(payload);
+		if (network) network.SRP_AISendEmergencyCall(payload);
 	}
 }
 
@@ -215,3 +283,4 @@ modded class PHN_CellMain
 		if (phone) phone.SRP_AIRequestEmergency("MEDICAL");
 	}
 }
+
