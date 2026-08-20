@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertOctagon, BellRing, Bot, Clock3, Filter, MapPin, MessageSquarePlus, Plus, Radio, RefreshCw, Search, ShieldAlert, Siren, Users, Volume2, VolumeX, X } from 'lucide-react';
-import { api, API_URL, socketUrl } from '../api.js';
+import { api, API_URL, authHeaders, socketUrl } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 const priorities = ['ALL','P0','P1','P2','P3'];
@@ -40,7 +40,7 @@ export default function Dashboard() {
   async function playDispatchVoice(call) {
     window.dispatchEvent(new CustomEvent('srp:ai-dispatch', { detail: call }));
     try {
-      const response = await fetch(`${API_URL}${call.dispatch_audio_url}`, { credentials: 'include' });
+      const response = await fetch(`${API_URL}${call.dispatch_audio_url}`, { credentials: 'include', headers: authHeaders() });
       if (!response.ok) throw new Error('cloud voice unavailable');
       const audio = new Audio(URL.createObjectURL(await response.blob()));
       audio.volume = 0.72;
