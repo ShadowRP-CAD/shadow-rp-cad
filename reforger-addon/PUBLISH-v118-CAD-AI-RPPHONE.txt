@@ -1,0 +1,36 @@
+SHADOW RP V2 V118 - CAD AI / RPPHONE IDENTITY UPDATE
+=====================================================
+
+Built for the supplied, Workbench-validated Shadow RP v117 source.
+
+Adds:
+- RPPhone Police and Medical calls sent to Shadow AI Dispatch.
+- Automatic 10-code, priority, agency and nearest available-unit selection.
+- Police/EMS 10-8 roster and location telemetry synchronized to the web CAD.
+- Permanent Reforger identity on emergency requests for secure account lookup.
+- Active RPPhone roleplay alias on in-game telemetry.
+- Backend enforcement of the linked CAD persona instead of a platform/real name.
+- Continued Bank2/ATM synchronization for persistent stock-market money.
+
+Preserves:
+- Workshop GUID 37A6F000254E4253.
+- Shadow RP Everon Housing v1.1.7 and its purchased-door action fix.
+- Full EPF character, inventory, location, RPPhone name and Bank2 persistence.
+- Existing Police/EMS licensing, duty commands, shops, payroll and radio.
+- Existing Shadow RP logo, thumbnail, loading screen, world and prefabs.
+- Stock inherited PlayerController prefab and the existing CAD owner link.
+- No dependency on addon 463404114BC14192 or its unconscious system.
+
+Publish order:
+1. Publish Shadow RP Everon Housing v1.1.7 under GUID 6B39A5D47E2C810F.
+2. Run Install-IntoShadowRPServer.ps1 against the complete Shadow RP v117 source.
+3. Open that complete source in Workbench and Compile and Reload Scripts.
+4. Publish UPDATE to Shadow RP GUID 37A6F000254E4253.
+5. Fully stop and restart the dedicated server without deleting its profile or
+   persistence database.
+
+The backend must be deployed from the matching GitHub revision. Railway needs
+AI_DISPATCH_ENABLED=true and an OPENAI_API_KEY for OpenAI classification and
+cloud voice. Without the key, the safety dispatcher and browser voice fallback
+remain active.
+
