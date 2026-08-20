@@ -1,13 +1,17 @@
 import { WebSocketServer, WebSocket } from 'ws';
+import { resolveWebTokenUser } from './auth.js';
 
 export function createWebSocketHub(server, sessionMiddleware, db) {
   const wss = new WebSocketServer({ noServer: true });
   server.on('upgrade', (request, socket, head) => {
-    const { pathname } = new URL(request.url, 'http://localhost');
+    const requestUrl = new URL(request.url, 'http://localhost');
+    const { pathname } = requestUrl;
     if (pathname !== '/ws') return socket.destroy();
     sessionMiddleware(request, {}, () => {
-      if (!request.session?.userId) return socket.destroy();
-      const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(request.session.userId);
+      let user = request.session?.userId
+        ? db.prepare('SELECT id, role FROM users WHERE id = ?').get(request.session.userId)
+        : null;
+      if (!user) user = resolveWebTokenUser(db, requestUrl.searchParams.get('token') || '');
       if (!user) return socket.destroy();
       request.user = user;
       wss.handleUpgrade(request, socket, head, ws => {
