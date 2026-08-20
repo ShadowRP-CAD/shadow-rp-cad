@@ -132,6 +132,15 @@ describe('Shadow RP CAD API', () => {
     assert.equal(created.body.last_name, '');
   });
 
+  it('uses the linked CAD persona instead of a platform or real name for RPPhone calls', async () => {
+    const dispatched = await request(app).post('/api/cad/call911').set('x-api-key', 'test-key').send({
+      reforgerUid: 'reforger-123', callerName: 'Platform Account Name', locationGrid: '051 060',
+      description: 'Medical assistance requested through RPPhone.', serviceType: 'MEDICAL', worldX: 5100, worldZ: 6000
+    }).expect(201);
+    assert.equal(dispatched.body.caller_name, 'Cipher');
+    assert.notEqual(dispatched.body.caller_name, 'Platform Account Name');
+  });
+
   it('uses the live ATM Bank Manager balance for stock purchases', async () => {
     const synced = await request(app).post('/api/economy/atm-sync').set('x-api-key', 'test-key').send({
       reforgerUid: 'reforger-123', playerName: 'ShadowDispatch', bankBalance: 43210
@@ -183,3 +192,4 @@ describe('Shadow RP CAD API', () => {
     await agent.patch(`/api/admin/users/${me.body.user.id}`).send({ role: 'CIVILIAN' }).expect(400);
   });
 });
+
