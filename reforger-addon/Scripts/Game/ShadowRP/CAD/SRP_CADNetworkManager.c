@@ -74,6 +74,7 @@ class SRP_CADEmergencyRequest : JsonApiStruct
 	string apiKey;
 	string callTitle;
 	string callerName;
+	string reforgerUid;
 	string locationGrid;
 	string description;
 	string serviceType;
@@ -82,7 +83,7 @@ class SRP_CADEmergencyRequest : JsonApiStruct
 
 	void SRP_CADEmergencyRequest()
 	{
-		RegV("apiKey"); RegV("callTitle"); RegV("callerName"); RegV("locationGrid");
+		RegV("apiKey"); RegV("callTitle"); RegV("callerName"); RegV("reforgerUid"); RegV("locationGrid");
 		RegV("description"); RegV("serviceType"); RegV("worldX"); RegV("worldZ");
 	}
 }
@@ -273,3 +274,4 @@ class SRP_CADNetworkManager : ScriptComponent
 		m_ActiveCallbacks.RemoveItem(callback);
 	}
 }
+
