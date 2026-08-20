@@ -217,7 +217,13 @@ export function createApiRouter(db, events) {
   });
 
   router.post('/cad/call911', requireInternal, async (req, res, next) => {
-    const caller = cleanString(req.body.callerName, 80);
+    const reforgerUid = cleanString(req.body.reforgerUid, 128);
+    const submittedCaller = cleanString(req.body.callerName, 80);
+    const linkedPersona = reforgerUid ? db.prepare(`SELECT c.first_name, c.last_name
+      FROM users u JOIN characters c ON c.user_id = u.id
+      WHERE u.reforger_uid = ? ORDER BY c.id DESC LIMIT 1`).get(reforgerUid) : null;
+    const personaAlias = linkedPersona ? cleanString(`${linkedPersona.first_name} ${linkedPersona.last_name}`.trim(), 80) : '';
+    const caller = personaAlias || submittedCaller || (reforgerUid ? 'Linked RPPhone caller' : '');
     const grid = cleanString(req.body.locationGrid, 32);
     const description = cleanString(req.body.description, 1000);
     if (!caller || !grid || !description) return res.status(400).json({ error: 'callerName, locationGrid, and description are required' });
@@ -650,3 +656,4 @@ export function createApiRouter(db, events) {
 
   return router;
 }
+
