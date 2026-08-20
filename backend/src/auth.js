@@ -53,6 +53,44 @@ export function attachUser(db) {
 }
 
 export function registerAuthRoutes(app, db) {
+  // Discord's mobile authorization view can open the callback more than once.
+  // Keep the first exchange promise briefly so every duplicate receives the
+  // same successful login instead of trying to redeem a single-use code twice.
+  const oauthExchanges = new Map();
+
+  async function exchangeDiscordCode(code, ipAddress) {
+    const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: config.discordClientId,
+        client_secret: config.discordClientSecret,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: config.discordCallbackUrl
+      })
+    });
+    if (!tokenResponse.ok) throw new Error(`Discord token exchange failed (${tokenResponse.status})`);
+    const token = await tokenResponse.json();
+    const profileResponse = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token.access_token}` } });
+    if (!profileResponse.ok) throw new Error(`Discord profile request failed (${profileResponse.status})`);
+    const profile = await profileResponse.json();
+    const displayName = profile.global_name || profile.username;
+    db.prepare(`INSERT INTO users (discord_id, discord_username) VALUES (?, ?)
+      ON CONFLICT(discord_id) DO UPDATE SET discord_username = excluded.discord_username`).run(profile.id, displayName);
+    const user = db.prepare('SELECT id FROM users WHERE discord_id = ?').get(profile.id);
+    const privilegedUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch' AND role IN ('LEO','EMS','DISPATCH','ADMIN')`).get().count;
+    const realUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch'`).get().count;
+    if (privilegedUsers === 0 && realUsers === 1) db.prepare(`UPDATE users SET role='ADMIN' WHERE id=?`).run(user.id);
+    db.prepare(`INSERT INTO audit_logs (user_id,actor_name,action,entity_type,entity_id,details,ip_address) VALUES (?,?,?,?,?,?,?)`)
+      .run(user.id, displayName, 'AUTH_LOGIN', 'SESSION', String(user.id), JSON.stringify({ provider: 'Discord' }), ipAddress);
+    return user.id;
+  }
+
+  function saveSession(req) {
+    return new Promise((resolve, reject) => req.session.save(error => error ? reject(error) : resolve()));
+  }
+
   app.get('/auth/discord', (req, res) => {
     if (!config.discordClientId) return res.status(503).send('Discord OAuth is not configured.');
     const state = crypto.randomBytes(24).toString('hex');
@@ -69,33 +107,19 @@ export function registerAuthRoutes(app, db) {
 
   app.get('/auth/discord/callback', async (req, res, next) => {
     try {
-      if (!req.query.code || req.query.state !== req.session.oauthState) return res.status(400).send('Invalid OAuth state.');
-      delete req.session.oauthState;
-      const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({
-          client_id: config.discordClientId,
-          client_secret: config.discordClientSecret,
-          grant_type: 'authorization_code',
-          code: String(req.query.code),
-          redirect_uri: config.discordCallbackUrl
-        })
-      });
-      if (!tokenResponse.ok) throw new Error(`Discord token exchange failed (${tokenResponse.status})`);
-      const token = await tokenResponse.json();
-      const profileResponse = await fetch('https://discord.com/api/users/@me', { headers: { Authorization: `Bearer ${token.access_token}` } });
-      if (!profileResponse.ok) throw new Error(`Discord profile request failed (${profileResponse.status})`);
-      const profile = await profileResponse.json();
-      db.prepare(`INSERT INTO users (discord_id, discord_username) VALUES (?, ?)
-        ON CONFLICT(discord_id) DO UPDATE SET discord_username = excluded.discord_username`).run(profile.id, profile.global_name || profile.username);
-      const user = db.prepare('SELECT id FROM users WHERE discord_id = ?').get(profile.id);
-      const privilegedUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch' AND role IN ('LEO','EMS','DISPATCH','ADMIN')`).get().count;
-      const realUsers = db.prepare(`SELECT COUNT(*) AS count FROM users WHERE discord_id != 'demo-dispatch'`).get().count;
-      if (privilegedUsers === 0 && realUsers === 1) db.prepare(`UPDATE users SET role='ADMIN' WHERE id=?`).run(user.id);
-      db.prepare(`INSERT INTO audit_logs (user_id,actor_name,action,entity_type,entity_id,details,ip_address) VALUES (?,?,?,?,?,?,?)`)
-        .run(user.id, profile.global_name || profile.username, 'AUTH_LOGIN', 'SESSION', String(user.id), JSON.stringify({ provider: 'Discord' }), req.ip);
-      req.session.userId = user.id;
+      const code = req.query.code ? String(req.query.code) : '';
+      let exchange = code ? oauthExchanges.get(code) : null;
+      if (!exchange) {
+        if (!code || req.query.state !== req.session.oauthState) return res.status(400).send('Invalid OAuth state.');
+        delete req.session.oauthState;
+        exchange = exchangeDiscordCode(code, req.ip);
+        oauthExchanges.set(code, exchange);
+        setTimeout(() => {
+          if (oauthExchanges.get(code) === exchange) oauthExchanges.delete(code);
+        }, 120_000).unref?.();
+      }
+      req.session.userId = await exchange;
+      await saveSession(req);
       res.redirect(config.frontendUrl);
     } catch (error) { next(error); }
   });
