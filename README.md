@@ -8,6 +8,7 @@ A complete starter system for a Shadow RP Arma Reforger server:
 - Shadow Exchange persistent virtual stock market with portfolios and order history
 - Alias-first roleplay personas that never request a real first or last name
 - Grizzly administration center with global records control and persistent audit history
+- AI emergency dispatch that classifies RPPhone calls, selects a 10-code, assigns nearby units, and speaks the radio bulletin
 
 The repository is intentionally framework-light. SQLite is accessed through Node's built-in `node:sqlite` module; there is no native database package or Prisma generation step.
 
@@ -18,6 +19,7 @@ shadow-rp-cad/
 ├── backend/
 │   ├── src/
 │   │   ├── app.js             Express middleware and app factory
+│   │   ├── aiDispatch.js      AI classification, safe fallback, and dispatch speech
 │   │   ├── auth.js            Discord OAuth, sessions, RBAC, internal auth
 │   │   ├── config.js          Environment configuration
 │   │   ├── db.js              Schema and development seed
@@ -37,7 +39,8 @@ shadow-rp-cad/
 │       ├── SRP_CADNetworkManager.c
 │       ├── SRP_AccountLinkComponent.c
 │       ├── SRP_DutySyncComponent.c
-│       └── SRP_EmergencyCallAction.c
+│       ├── SRP_EmergencyCallAction.c
+│       └── SRP_RPPhoneEmergencyBridge.c
 └── .github/workflows/deploy-pages.yml
 ```
 
@@ -47,6 +50,7 @@ shadow-rp-cad/
 flowchart LR
     G["Reforger player"] -->|"reliable RPC"| S["Dedicated game server"]
     S -->|"REST + internal key"| A["Express CAD API"]
+    A -->|"structured classification + speech"| AI["OpenAI API"]
     B["Browser"] -->|"Discord OAuth + session cookie"| A
     A --> D[("SQLite")]
     A -->|"authenticated WebSocket"| B
@@ -118,6 +122,7 @@ All browser requests use the session cookie. The three in-game POST routes requi
 | POST | `/api/link/generate` | Internal key | Administrative recovery token |
 | POST | `/api/link/verify` | Signed in | Consume token and link identity |
 | POST | `/api/cad/call911` | Internal key | Ingest emergency call |
+| GET | `/api/cad/dispatch/:id/audio` | CAD role | Generate the spoken AI radio bulletin |
 | POST | `/api/cad/unit-status` | Internal key | Upsert unit, duty state, and position |
 | GET | `/api/cad/dashboard` | CAD role | Active calls and recent units |
 | PATCH | `/api/cad/calls/:id` | CAD role | Assign units or change call status |
@@ -130,7 +135,7 @@ All browser requests use the session cookie. The three in-game POST routes requi
 | GET | `/api/admin/overview` | Admin | Global accounts, records, economy, and audit stream |
 | PATCH/DELETE | `/api/admin/*` | Admin | Moderate roles, balances, personas, vehicles, calls, and reports |
 | POST | `/api/reports` | CAD role | File incident, arrest, or citation report |
-| WS | `/ws` | Signed in | `call.created`, `call.updated`, `unit.updated` events |
+| WS | `/ws` | Signed in | `call.created`, `dispatch.created`, `call.updated`, `unit.updated` events |
 
 Example game-server request:
 
@@ -229,6 +234,26 @@ Set all production variables from `.env.example`, use long random secrets, set `
 
 For separate frontend and API domains, the backend sets a `Secure; SameSite=None` session cookie in production. `FRONTEND_URL` must match the browser origin exactly for credentialed CORS.
 
+### Enable Shadow AI Dispatch on Railway
+
+Add these Railway service variables, then redeploy:
+
+```text
+OPENAI_API_KEY=your-server-side-key
+AI_DISPATCH_ENABLED=true
+AI_DISPATCH_MODEL=gpt-4o-mini
+AI_DISPATCH_TTS_MODEL=gpt-4o-mini-tts
+AI_DISPATCH_VOICE=cedar
+```
+
+Never place `OPENAI_API_KEY` in a `VITE_` variable or the Reforger addon. The backend sends caller narrative, grid, coordinates, and the current 10-8 roster for classification. It validates the structured result against the Shadow RP codebook and accepts only currently available, agency-compatible callsigns. If the AI service times out, the call is still created and broadcast using conservative emergency rules.
+
+CAD staff click **Enable voice** once on the Dashboard. New `dispatch.created` events then play the generated radio voice automatically, with the browser's local speech engine as fallback. The UI clearly labels the dispatcher as AI.
+
+The Reforger bridge attaches to RPPhone button identifiers `911`, `Police`, `Medical`, and `EMS`. When the installed RPPhone build exposes one of these shortcuts, it sends the player's live grid and coordinates. On-duty public-safety players receive the matching dispatch in chat and a prominent radio alert.
+
+Enfusion's supported `AudioSystem.PlaySound` method plays packaged `.wav` resources, not runtime HTTP audio. Dynamic speech therefore plays in the web CAD radio; the game uses synchronized dispatch text instead of unsupported VoN injection.
+
 ## Production checklist
 
 - Rotate `SESSION_SECRET` and `INTERNAL_API_KEY`; never commit `.env`.
@@ -250,6 +275,10 @@ For separate frontend and API domains, the backend sets a `Secure; SameSite=None
 - [Bohemia: Player identity helper](https://community.bistudio.com/wikidata/external-data/arma-reforger/ArmaReforgerScriptAPIPublic/interfaceSCR__PlayerIdentityUtils.html)
 - [Bohemia: map grid helpers](https://community.bistudio.com/wikidata/external-data/arma-reforger/ArmaReforgerScriptAPIPublic/interfaceSCR__MapEntity.html)
 - [Bohemia: ScriptedUserAction](https://community.bistudio.com/wikidata/external-data/arma-reforger/ArmaReforgerScriptAPIPublic/interfaceScriptedUserAction.html)
+- [Bohemia: AudioSystem](https://community.bistudio.com/wikidata/external-data/arma-reforger/EnfusionScriptAPIPublic/interfaceAudioSystem.html)
+- [Bohemia: Voice over Network](https://community.bistudio.com/wiki/Arma_Reforger:Audio:Voice_over_Network)
+- [OpenAI: GPT-4o mini](https://developers.openai.com/api/docs/models/gpt-4o-mini)
+- [OpenAI: GPT-4o mini TTS](https://developers.openai.com/api/docs/models/gpt-4o-mini-tts)
 
 ## Scope notes
 

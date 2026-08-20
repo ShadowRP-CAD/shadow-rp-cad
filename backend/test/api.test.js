@@ -66,9 +66,14 @@ describe('Shadow RP CAD API', () => {
   });
 
   it('ingests calls and returns the dispatch dashboard', async () => {
-    await request(app).post('/api/cad/call911').set('x-api-key', 'test-key').send({
+    const dispatched = await request(app).post('/api/cad/call911').set('x-api-key', 'test-key').send({
       callerName: 'Pat Doe', locationGrid: '050 060', description: 'Vehicle collision', worldX: 5000, worldZ: 6000
     }).expect(201);
+    assert.equal(dispatched.body.ten_code, '10-50');
+    assert.equal(dispatched.body.call_type, 'TRAFFIC');
+    assert.match(dispatched.body.dispatch_text, /grid/i);
+    assert.equal(dispatched.body.ai_mode, 'SAFE_FALLBACK');
+    assert.deepEqual(dispatched.body.assigned_units, ['1-L-12']);
     const dashboard = await agent.get('/api/cad/dashboard').expect(200);
     assert.ok(dashboard.body.calls.some(call => call.description === 'Vehicle collision'));
     assert.ok(Array.isArray(dashboard.body.bolos));

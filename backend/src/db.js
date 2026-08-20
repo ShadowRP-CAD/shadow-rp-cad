@@ -222,6 +222,11 @@ export function createDatabase(filename = config.databasePath) {
   if (!callColumns.some(column => column.name === 'priority')) db.exec(`ALTER TABLE active_calls ADD COLUMN priority TEXT NOT NULL DEFAULT 'P2'`);
   if (!callColumns.some(column => column.name === 'call_type')) db.exec(`ALTER TABLE active_calls ADD COLUMN call_type TEXT NOT NULL DEFAULT 'GENERAL'`);
   if (!callColumns.some(column => column.name === 'disposition')) db.exec(`ALTER TABLE active_calls ADD COLUMN disposition TEXT`);
+  if (!callColumns.some(column => column.name === 'ten_code')) db.exec(`ALTER TABLE active_calls ADD COLUMN ten_code TEXT`);
+  if (!callColumns.some(column => column.name === 'dispatch_text')) db.exec(`ALTER TABLE active_calls ADD COLUMN dispatch_text TEXT`);
+  if (!callColumns.some(column => column.name === 'dispatch_agency')) db.exec(`ALTER TABLE active_calls ADD COLUMN dispatch_agency TEXT`);
+  if (!callColumns.some(column => column.name === 'ai_confidence')) db.exec(`ALTER TABLE active_calls ADD COLUMN ai_confidence REAL`);
+  if (!callColumns.some(column => column.name === 'ai_mode')) db.exec(`ALTER TABLE active_calls ADD COLUMN ai_mode TEXT`);
   return db;
 }
 

@@ -76,13 +76,33 @@ class SRP_CADEmergencyRequest : JsonApiStruct
 	string callerName;
 	string locationGrid;
 	string description;
+	string serviceType;
 	float worldX;
 	float worldZ;
 
 	void SRP_CADEmergencyRequest()
 	{
 		RegV("apiKey"); RegV("callTitle"); RegV("callerName"); RegV("locationGrid");
-		RegV("description"); RegV("worldX"); RegV("worldZ");
+		RegV("description"); RegV("serviceType"); RegV("worldX"); RegV("worldZ");
+	}
+}
+
+class SRP_CADDispatchResponse : JsonApiStruct
+{
+	int id;
+	string call_title;
+	string location_grid;
+	string ten_code;
+	string dispatch_text;
+	string dispatch_agency;
+	string priority;
+	ref array<string> assigned_units;
+
+	void SRP_CADDispatchResponse()
+	{
+		RegV("id"); RegV("call_title"); RegV("location_grid"); RegV("ten_code");
+		RegV("dispatch_text"); RegV("dispatch_agency"); RegV("priority"); RegV("assigned_units");
+		assigned_units = {};
 	}
 }
 
@@ -124,6 +144,14 @@ class SRP_CADRestCallback : RestCallback
 				else
 					m_LinkTarget.DeliverLinkResult(true, response.token);
 			}
+		}
+
+		if (m_Manager && m_RequestName == "call.911")
+		{
+			SRP_CADDispatchResponse dispatch = new SRP_CADDispatchResponse();
+			dispatch.ExpandFromRAW(data);
+			if (!dispatch.dispatch_text.IsEmpty())
+				m_Manager.BroadcastEmergencyDispatch(dispatch);
 		}
 
 		if (m_Manager)
@@ -200,6 +228,26 @@ class SRP_CADNetworkManager : ScriptComponent
 		payload.apiKey = m_InternalApiKey;
 		payload.Pack();
 		Post("api/cad/call911", payload.AsString(), "call.911");
+	}
+
+	void BroadcastEmergencyDispatch(SRP_CADDispatchResponse dispatch)
+	{
+		if (!Replication.IsServer() || !GetGame())
+			return;
+
+		PlayerManager playerManager = GetGame().GetPlayerManager();
+		array<int> playerIds = {};
+		playerManager.GetPlayers(playerIds);
+		foreach (int playerId : playerIds)
+		{
+			IEntity player = playerManager.GetPlayerControlledEntity(playerId);
+			if (!player)
+				continue;
+			SRP_DutySyncComponent duty = SRP_DutySyncComponent.Cast(player.FindComponent(SRP_DutySyncComponent));
+			SRP_AccountLinkComponent link = SRP_AccountLinkComponent.Cast(player.FindComponent(SRP_AccountLinkComponent));
+			if (link && duty && duty.AcceptsDispatch(dispatch.dispatch_agency))
+				link.DeliverEmergencyDispatch(dispatch.ten_code, dispatch.priority, dispatch.location_grid, dispatch.dispatch_text);
+		}
 	}
 
 	protected void Post(string path, string json, string requestName, SRP_AccountLinkComponent linkTarget = null)

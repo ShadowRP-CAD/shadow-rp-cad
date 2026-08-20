@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertOctagon, BellRing, Clock3, Filter, MapPin, MessageSquarePlus, Plus, Radio, RefreshCw, Search, ShieldAlert, Siren, Users, X } from 'lucide-react';
-import { api, socketUrl } from '../api.js';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertOctagon, BellRing, Bot, Clock3, Filter, MapPin, MessageSquarePlus, Plus, Radio, RefreshCw, Search, ShieldAlert, Siren, Users, Volume2, VolumeX, X } from 'lucide-react';
+import { api, API_URL, socketUrl } from '../api.js';
 import StatusBadge from '../components/StatusBadge.jsx';
 
 const priorities = ['ALL','P0','P1','P2','P3'];
@@ -14,9 +14,13 @@ export default function Dashboard() {
   const [priority, setPriority] = useState('ALL');
   const [selectedCallId, setSelectedCallId] = useState(null);
   const [modal, setModal] = useState(null);
+  const [voiceArmed, setVoiceArmed] = useState(() => localStorage.getItem('srp-ai-dispatch-voice') === 'on');
+  const [latestDispatch, setLatestDispatch] = useState(null);
+  const voiceArmedRef = useRef(voiceArmed);
   const load = useCallback(() => api('/cad/dashboard').then(result => { setData(result); setError(''); }).catch(e => setError(e.message)), []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { voiceArmedRef.current = voiceArmed; localStorage.setItem('srp-ai-dispatch-voice', voiceArmed ? 'on' : 'off'); }, [voiceArmed]);
   useEffect(() => {
     const ws = new WebSocket(socketUrl());
     ws.onmessage = event => {
@@ -25,9 +29,41 @@ export default function Dashboard() {
       if (message.type === 'unit.updated') setData(current => ({ ...current, units: upsert(current.units, message.data, 'reforger_uid') }));
       if (message.type === 'bolo.created') setData(current => ({ ...current, bolos: upsert(current.bolos, message.data) }));
       if (message.type === 'bolo.updated') setData(current => ({ ...current, bolos: upsert(current.bolos, message.data).filter(bolo => bolo.status === 'ACTIVE') }));
+      if (message.type === 'dispatch.created') {
+        setLatestDispatch(message.data);
+        if (voiceArmedRef.current) playDispatchVoice(message.data);
+      }
     };
     return () => ws.close();
   }, []);
+
+  async function playDispatchVoice(call) {
+    window.dispatchEvent(new CustomEvent('srp:ai-dispatch', { detail: call }));
+    try {
+      const response = await fetch(`${API_URL}${call.dispatch_audio_url}`, { credentials: 'include' });
+      if (!response.ok) throw new Error('cloud voice unavailable');
+      const audio = new Audio(URL.createObjectURL(await response.blob()));
+      audio.volume = 0.72;
+      await audio.play();
+      audio.onended = () => URL.revokeObjectURL(audio.src);
+    } catch {
+      if ('speechSynthesis' in window) {
+        speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(call.dispatch_text);
+        utterance.rate = 0.93; utterance.pitch = 0.82; utterance.volume = 0.72;
+        speechSynthesis.speak(utterance);
+      }
+    }
+  }
+
+  function toggleVoice() {
+    const next = !voiceArmed;
+    setVoiceArmed(next);
+    if (next && 'speechSynthesis' in window) {
+      const test = new SpeechSynthesisUtterance('Shadow AI dispatch radio armed.');
+      test.volume = 0.55; test.rate = 0.95; speechSynthesis.speak(test);
+    }
+  }
 
   const available = useMemo(() => data.units.filter(unit => unit.duty_status === '10-8').length, [data.units]);
   const panic = useMemo(() => data.units.filter(unit => unit.duty_status === '10-99').length, [data.units]);
@@ -85,6 +121,8 @@ export default function Dashboard() {
     {error && <div className="alert">{error}</div>}
     {panic > 0 && <div className="panic-banner"><AlertOctagon/><div><strong>{panic} UNIT PANIC SIGNAL{panic > 1 ? 'S' : ''}</strong><span>Immediate assistance required. Locate and dispatch all available units.</span></div></div>}
 
+    <section className={`ai-dispatch-console ${voiceArmed ? 'armed' : ''}`}><div className="ai-orb"><Bot/></div><div className="grow"><span>SHADOW AI DISPATCH · {voiceArmed ? 'VOICE ARMED' : 'VOICE MUTED'}</span><strong>{latestDispatch ? `${latestDispatch.ten_code} · ${latestDispatch.call_title}` : 'Monitoring RPPhone emergency channels'}</strong><small>{latestDispatch?.dispatch_text || 'Every 911 and medical call is classified, prioritized, assigned, and broadcast in real time.'}</small></div>{latestDispatch && <button onClick={() => playDispatchVoice(latestDispatch)}><Volume2/> Replay</button>}<button className="voice-arm" onClick={toggleVoice}>{voiceArmed ? <Volume2/> : <VolumeX/>}{voiceArmed ? 'Armed' : 'Enable voice'}</button></section>
+
     <div className="metric-grid ops-metrics">
       <article><span>Active incidents</span><strong>{data.calls.length}</strong><Siren/></article>
       <article className={critical ? 'critical-metric' : ''}><span>Priority P0 / P1</span><strong>{critical}</strong><ShieldAlert/></article>
@@ -120,7 +158,7 @@ export default function Dashboard() {
 
 function IncidentCard({ call, units, onOpen, onAssign, onClose }) {
   return <article className={`advanced-call-card priority-${call.priority.toLowerCase()}`}>
-    <button className="call-open-area" onClick={onOpen}><div className="call-top"><div><Priority value={call.priority}/><span className="call-type">{call.call_type}</span></div><StatusBadge value={call.status}/></div><div className="call-id">INC-{String(call.id).padStart(5,'0')} · {timeAgo(call.created_at)}</div><h3>{call.call_title}</h3><p>{call.description}</p><div className="call-meta"><span><MapPin/> {call.location_grid}</span><span>{call.caller_name}</span><span><Clock3/> {new Date(`${call.created_at}Z`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div></button>
+    <button className="call-open-area" onClick={onOpen}><div className="call-top"><div><Priority value={call.priority}/><span className="call-type">{call.call_type}</span>{call.ten_code && <span className="call-type ai-code"><Bot/> {call.ten_code}</span>}</div><StatusBadge value={call.status}/></div><div className="call-id">INC-{String(call.id).padStart(5,'0')} · {timeAgo(call.created_at)}{call.ai_mode && ` · ${call.ai_mode === 'OPENAI' ? 'AI CLASSIFIED' : 'SAFE AUTO-DISPATCH'}`}</div><h3>{call.call_title}</h3><p>{call.dispatch_text || call.description}</p><div className="call-meta"><span><MapPin/> {call.location_grid}</span><span>{call.caller_name}</span><span><Clock3/> {new Date(`${call.created_at}Z`).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div></button>
     <div className="advanced-assign"><select defaultValue="" onChange={event => { if (event.target.value) onAssign(event.target.value); event.target.value=''; }}><option value="" disabled>Assign responding unit…</option>{units.map(unit => <option key={unit.reforger_uid} value={unit.callsign}>{unit.callsign} · {unit.duty_status} · {unit.location_grid || 'No grid'}</option>)}</select><button onClick={onOpen}>Open command</button><button className="subtle" onClick={onClose}>Close</button></div>
     {call.assigned_units?.length > 0 && <div className="assigned-unit-chips">{call.assigned_units.map(callsign => <span key={callsign}><Radio/> {callsign}</span>)}</div>}
   </article>;

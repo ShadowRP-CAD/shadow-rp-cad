@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import express from 'express';
 import { requireAuth, requireInternal, requireRole } from './auth.js';
 import { getPublicSunoTracks } from './suno.js';
+import { classifyEmergency, generateDispatchSpeech } from './aiDispatch.js';
 
 const parseJson = value => { try { return JSON.parse(value || '[]'); } catch { return []; } };
 const cleanString = (value, max = 500) => String(value ?? '').trim().slice(0, max);
@@ -24,7 +25,7 @@ function rowToCharacter(row) {
 }
 
 function rowToCall(row) {
-  return row && { ...row, assigned_units: parseJson(row.assigned_units) };
+  return row && { ...row, assigned_units: parseJson(row.assigned_units), dispatch_audio_url: row.dispatch_text ? `/api/cad/dispatch/${row.id}/audio` : null };
 }
 
 function callWithEvents(db, row) {
@@ -215,20 +216,43 @@ export function createApiRouter(db, events) {
     }
   });
 
-  router.post('/cad/call911', requireInternal, (req, res) => {
-    const title = cleanString(req.body.callTitle || 'Emergency call', 100);
+  router.post('/cad/call911', requireInternal, async (req, res, next) => {
     const caller = cleanString(req.body.callerName, 80);
     const grid = cleanString(req.body.locationGrid, 32);
     const description = cleanString(req.body.description, 1000);
     if (!caller || !grid || !description) return res.status(400).json({ error: 'callerName, locationGrid, and description are required' });
-    const priority = priorities.includes(cleanString(req.body.priority, 2).toUpperCase()) ? cleanString(req.body.priority, 2).toUpperCase() : 'P1';
-    const callType = cleanString(req.body.callType || '911', 32).toUpperCase();
-    const result = db.prepare(`INSERT INTO active_calls (call_title, caller_name, location_grid, world_x, world_z, description, priority, call_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(title, caller, grid, Number(req.body.worldX) || null, Number(req.body.worldZ) || null, description, priority, callType);
-    addCallEvent(db, result.lastInsertRowid, 'CREATED', `Emergency call received from ${caller}`, 'Game Server');
-    const call = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id = ?').get(result.lastInsertRowid));
-    events.broadcast('call.created', call);
-    res.status(201).json(call);
+    try {
+      const worldX = Number(req.body.worldX);
+      const worldZ = Number(req.body.worldZ);
+      const units = db.prepare(`SELECT * FROM units WHERE datetime(updated_at) > datetime('now', '-30 minutes')`).all();
+      const dispatch = await classifyEmergency({ callerName: caller, locationGrid: grid, description, serviceType: cleanString(req.body.serviceType || req.body.callType || '911', 32).toUpperCase(), worldX, worldZ }, units);
+      const status = dispatch.assignedCallsigns.length ? 'DISPATCHED' : 'OPEN';
+      const result = db.prepare(`INSERT INTO active_calls
+        (call_title,caller_name,location_grid,world_x,world_z,description,priority,call_type,status,assigned_units,ten_code,dispatch_text,dispatch_agency,ai_confidence,ai_mode)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        dispatch.title, caller, grid, Number.isFinite(worldX) ? worldX : null, Number.isFinite(worldZ) ? worldZ : null,
+        dispatch.summary, dispatch.priority, dispatch.callType, status, JSON.stringify(dispatch.assignedCallsigns), dispatch.tenCode,
+        dispatch.radioText, dispatch.agencies.join(','), dispatch.confidence, dispatch.mode
+      );
+      addCallEvent(db, result.lastInsertRowid, 'CREATED', `Emergency call received from ${caller}`, 'RPPhone');
+      addCallEvent(db, result.lastInsertRowid, 'AI_DISPATCH', `${dispatch.tenCode} · ${dispatch.radioText}`, 'Shadow AI Dispatch');
+      for (const callsign of dispatch.assignedCallsigns) addCallEvent(db, result.lastInsertRowid, 'UNIT_ASSIGNED', `${callsign} automatically assigned`, 'Shadow AI Dispatch');
+      const call = callWithEvents(db, db.prepare('SELECT * FROM active_calls WHERE id = ?').get(result.lastInsertRowid));
+      events.broadcast('call.created', call);
+      events.broadcast('dispatch.created', call);
+      res.status(201).json(call);
+    } catch (error) { next(error); }
+  });
+
+  router.get('/cad/dispatch/:id/audio', requireAuth, requireRole(...cadRoles), async (req, res, next) => {
+    const call = db.prepare('SELECT id,dispatch_text FROM active_calls WHERE id=?').get(req.params.id);
+    if (!call?.dispatch_text) return res.status(404).json({ error: 'Dispatch audio is unavailable' });
+    try {
+      const audio = await generateDispatchSpeech(call.dispatch_text);
+      if (!audio) return res.status(503).json({ error: 'AI voice is not configured; browser speech fallback remains available.' });
+      res.set({ 'Content-Type': 'audio/mpeg', 'Cache-Control': 'private, max-age=86400', 'Content-Length': audio.length });
+      res.send(audio);
+    } catch (error) { next(error); }
   });
 
   router.post('/cad/calls', requireAuth, requireRole(...cadRoles), (req, res) => {

@@ -59,13 +59,13 @@ class SRP_AccountLinkComponent : ScriptComponent
 	}
 
 	// Shared client entry point used by SRP_EmergencyCallAction.
-	void RequestEmergencyCall(string description)
+	void RequestEmergencyCall(string description, string serviceType = "911")
 	{
-		Rpc(RpcAsk_SendEmergencyCall, description);
+		Rpc(RpcAsk_SendEmergencyCall, description, serviceType);
 	}
 
 	[RplRpc(RplChannel.Reliable, RplRcver.Server)]
-	protected void RpcAsk_SendEmergencyCall(string description)
+	protected void RpcAsk_SendEmergencyCall(string description, string serviceType)
 	{
 		IEntity player = GetOwner();
 		PlayerManager playerManager = GetGame().GetPlayerManager();
@@ -77,11 +77,26 @@ class SRP_AccountLinkComponent : ScriptComponent
 		payload.callerName = playerManager.GetPlayerName(playerId);
 		payload.locationGrid = SCR_MapEntity.GetGridLabel(position);
 		payload.description = description;
+		payload.serviceType = serviceType;
 		payload.worldX = position[0];
 		payload.worldZ = position[2];
 
 		SRP_CADNetworkManager network = SRP_CADNetworkManager.GetInstance();
 		if (network)
 			network.SendEmergencyCall(payload);
+	}
+
+	void DeliverEmergencyDispatch(string tenCode, string priority, string grid, string dispatchText)
+	{
+		Rpc(RpcDo_ShowEmergencyDispatch, tenCode, priority, grid, dispatchText);
+	}
+
+	[RplRpc(RplChannel.Reliable, RplRcver.Owner)]
+	protected void RpcDo_ShowEmergencyDispatch(string tenCode, string priority, string grid, string dispatchText)
+	{
+		SCR_ChatPanelManager chat = SCR_ChatPanelManager.GetInstance();
+		if (chat)
+			chat.OnNewMessage("[AI DISPATCH] " + dispatchText);
+		SCR_HintManagerComponent.ShowCustomHint(dispatchText, "AI DISPATCH RADIO · " + priority + " · " + tenCode, 18);
 	}
 }

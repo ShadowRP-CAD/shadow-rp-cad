@@ -2,6 +2,18 @@
 
 This source addon is configured for the live Shadow RP backend and uses project GUID `A4C19E7B53D02461`.
 
+## Existing combined Shadow RP server source
+
+For the server project that already contains the configured CAD/ATM bridge, install only the non-destructive AI extension. From this folder run:
+
+```powershell
+.\Install-IntoShadowRPServer.ps1 -ServerSource "C:\Users\Dev\Desktop\Server Mods\ShadowRP-v115-NO-UNCON-SERVER-AND-HOUSING\Server-Source"
+```
+
+This copies one new file, `SRP_AIDispatchServerIntegration.c`, and does not replace the configured API key, ATM sync, onboarding, or any existing CAD script. Open that server project in Workbench and compile before publishing.
+
+The remaining instructions below apply when publishing the CAD bridge as its own standalone Workshop addon.
+
 ## Install and validate
 
 1. Copy this entire folder to `Documents\My Games\ArmaReforgerWorkbench\addons\Shadow RP CAD Bridge`.
@@ -18,6 +30,8 @@ This source addon is configured for the live Shadow RP backend and uses project 
 5. Save each player prefab.
 6. Save the world and test in **Dedicated Server** mode, not only local preview. No terminal or placed interaction is required.
 
+The addon now declares RPPhone (`65EF7B586691A802`) as a dependency. `SRP_RPPhoneEmergencyBridge.c` connects the phone's `911`, `Police`, `Medical`, and `EMS` shortcut identifiers to the CAD automatically. If your RPPhone version renamed those widgets, update the matching string in that file to the identifier shown in the phone layout.
+
 The player automatically receives a code four seconds after the first replicated character is created. It appears as a top-screen message for 30 seconds. The backend records that prompt permanently, so it is not displayed again on reconnect after that identity has received its code.
 
 ## Test checklist
@@ -28,6 +42,9 @@ The player automatically receives a code four seconds after the first replicated
 4. Confirm the website banner disappears and Civilian Hub banking unlocks.
 5. Reconnect and confirm the automatic message does not repeat.
 6. Check dedicated-server logs for `[ShadowRP CAD] link.onboarding succeeded`.
+7. Put one LEO or EMS unit on duty, then press the matching RPPhone emergency shortcut from a civilian.
+8. Confirm the CAD creates a 10-coded incident, automatically assigns a compatible 10-8 unit, and broadcasts `AI DISPATCH RADIO` to on-duty players.
+9. On the web Dashboard click **Enable voice**, place another call, and confirm the spoken bulletin includes its grid and 10-code.
 
 If a player lets the code expire before entering it, an administrator must clear that UID from `link_onboarding` before the next join. This preserves the strict one-message-only behavior.
 
